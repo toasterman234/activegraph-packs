@@ -1,0 +1,1480 @@
+ActiveGraph Direction Report: Pack-Based Assistant Substrate
+
+Updated: June 2026
+Purpose: Consolidate, critique, and refine the proposed ActiveGraph architecture for a modular assistant substrate.
+
+⸻
+
+1. Executive Summary
+
+ActiveGraph’s strongest direction is to become a graph-native control plane for long-running assistants.
+
+Not merely:
+
+LLM + tools
+
+Not merely:
+
+LLM + memory
+
+Not merely:
+
+graph database for agents
+
+But:
+
+event log + live graph + behaviors + packs + policies
+
+where every important assistant operation becomes inspectable:
+
+what was said
+who said it
+what was observed
+what context was used
+what memory was retrieved
+what tools were available
+what actions were proposed
+what was executed
+what failed
+what was remembered
+what artifact was produced
+why the assistant responded the way it did
+
+The product thesis:
+
+ActiveGraph lets developers build assistants whose communication, memory, tools, workflows, and external actions are event-sourced, graph-visible, auditable, replayable, and extensible through packs.
+
+The architectural refinement from this discussion is important:
+
+Do not add a large new “turn coordinator” or orchestration primitive.
+Instead, make coordination an emergent pattern of existing ActiveGraph primitives: events, frames, behaviors, views, actions, policies, and packs.
+
+The most elegant model is:
+
+Pack = collection of capabilities.
+Behavior = trigger + view + capabilities + outputs + policies.
+Frame = execution scope.
+View = behavior-specific context.
+Action = proposed/executed operation.
+Graph = shared state.
+Event log = source of truth.
+
+⸻
+
+2. Core Critique of the Proposed Direction
+
+The overall direction is strong, but the main risk is over-architecting too early.
+
+Several proposed concepts are useful but should not become new primitives yet:
+
+Turn Coordinator
+Context Requirement
+Workflow Manager
+Pack Context
+Global Tool Manager
+Global Memory Manager
+
+These names imply top-down orchestration. That is the opposite of ActiveGraph’s core philosophy.
+
+The better move is to express these ideas through:
+
+frames
+behavior view specs
+behavior capability hints
+core action objects
+core source/observation objects
+pack-level behavior maps
+policies
+runtime views
+
+So the critique is not “these concepts are wrong.” It is:
+
+They should be implemented as graph-native behavior patterns, not as a new orchestration layer.
+
+⸻
+
+3. Kernel vs Core Pack
+
+The kernel should remain small and generic.
+
+Kernel should own
+
+Event
+Graph
+Object
+Relation
+Behavior
+Pack
+Policy
+Frame
+View
+Patch/Diff
+Runtime
+Replay/Fork
+
+Kernel should not own
+
+Task
+Memory
+Person
+Company
+Message
+Email
+ToolCall
+CRM
+Goal
+Personality
+ResearchPaper
+InvestmentMemo
+
+Those belong in packs.
+
+The Core Pack should be the first shared semantic layer above the kernel.
+
+⸻
+
+4. Core Pack
+
+Core Pack should define the minimum universal assistant substrate.
+
+Recommended Core v0.1 objects:
+
+source
+observation
+task
+action
+artifact
+memory_candidate
+evaluation
+
+Do not include person, company, claim, evidence, or document in Core v0.1.
+
+Reason:
+
+person/company require dedupe and entity resolution
+claim/evidence/document may conflict with existing domain packs
+Core should avoid becoming a universal ontology
+
+Core object meanings
+
+source
+
+Something the system received or observed.
+
+Examples:
+
+chat message
+email
+SMS
+call transcript
+uploaded file
+URL
+tool result
+API response
+repo file
+meeting note
+
+observation
+
+A source-grounded thing the system noticed.
+
+Examples:
+
+"User wants to build Core Pack first."
+"Founder says ARR is $80k."
+"Email asks for follow-up."
+"Meeting included a decision."
+
+Observation is intentionally weaker than claim.
+
+Observation:
+  "The system noticed this in a source."
+Claim:
+  "The system is willing to assert this as likely true."
+
+Core v0.1 should be observation-first.
+
+task
+
+A minimal unit of work.
+
+Core task should be deliberately underpowered:
+
+title
+description
+status: candidate | active | blocked | done | rejected
+priority
+source_observation_ids
+owner_ref optional
+due_at optional
+metadata
+
+Task belongs in Core because many packs need a common work anchor.
+
+But Core task should not become a project-management system.
+
+Team/Ops Pack can later extend it with:
+
+assignment
+dependency
+milestone
+review
+completion evidence
+notification
+workload
+recurrence
+
+action
+
+A proposed or executed operation.
+
+Examples:
+
+tool call
+API call
+MCP call
+workflow run
+graph patch
+external write
+send email
+create GitHub issue
+run code
+
+The distinction matters:
+
+Task:
+  work to be done
+Action:
+  specific proposed/executed operation
+
+artifact
+
+A durable output.
+
+Examples:
+
+memo
+draft
+report
+email draft
+code patch
+slide deck
+research note
+investment note
+
+memory_candidate
+
+Something that might be worth remembering.
+
+Core should not decide full memory policy. It should only provide the candidate primitive.
+
+evaluation
+
+A judgment about an object, action, task, artifact, or memory candidate.
+
+Examples:
+
+completed successfully
+low confidence
+requires review
+not relevant
+contradicted
+high priority
+
+⸻
+
+5. Should Core Include context_requirement?
+
+Current recommendation: not yet.
+
+context_requirement is conceptually useful, but adding it to Core v0.1 risks formalizing too much too early.
+
+The better first step is to rely on:
+
+behavior view specs
+capability hints
+frame scope
+actions
+policies
+
+A behavior can declare what context it needs through its view.
+
+If later this proves insufficient, context_requirement can be promoted into Core.
+
+Deferred design
+
+Potential future object:
+
+context_requirement:
+  frame_id
+  requested_by_behavior
+  requirement_type
+  query
+  reason
+  required/optional
+  risk_class
+  status
+
+But for now, bump it.
+
+⸻
+
+6. Packs vs Behaviors: Who Needs Context?
+
+Behaviors need context, not packs.
+
+A pack can declare broad defaults, settings, available capabilities, and documentation. But different behaviors inside the same pack may need different context.
+
+Example:
+
+VC Pack
+detect_founder_email:
+  needs current message and sender identity
+enrich_company_context:
+  needs CRM/API/entity context
+draft_founder_reply:
+  needs email thread, owner style, relevant memories, company context
+create_investment_memo:
+  needs deck, diligence claims, market research, founder profile, prior memos
+
+Same pack. Very different context.
+
+Refined principle:
+
+Packs provide capabilities. Behaviors declare context needs. Frames provide scope. Views provide context.
+
+⸻
+
+7. Behavior Specification as the Main Developer Interface
+
+This should become the intuitive center of ActiveGraph pack authoring.
+
+A behavior should answer:
+
+When do I run?
+What graph view do I need?
+What capabilities may I use?
+What policies constrain me?
+What objects/actions/artifacts do I create?
+What downstream behaviors might my outputs trigger?
+
+Behavior shape:
+
+Behavior =
+  trigger
+  filter
+  view
+  capability hints
+  output schema
+  handler
+  policy
+
+Example:
+
+name: draft_founder_reply
+on:
+  - comm_message.created
+where:
+  channel: email
+  intent: reply_requested
+view:
+  include:
+    - current_message
+    - email_thread_summary
+    - sender_identity
+    - company_context
+    - relevant_memories
+    - owner_external_email_style
+capabilities:
+  may_use:
+    - memory.search
+    - crm.lookup_contact
+    - email.fetch_thread
+  cannot_execute_directly:
+    - email.send
+creates:
+  - artifact: email_draft
+  - action: send_email_proposed
+policy:
+  external_write_requires_owner_approval: true
+
+This is much easier to understand than a hidden coordinator.
+
+⸻
+
+8. Behavior Maps: How Packs Become Understandable
+
+A pack should expose a behavior map.
+
+Not a rigid workflow. Not a central controller. Just a readable graph of:
+
+event/object → behavior → output objects/actions → downstream behavior
+
+Example: Email Review behavior map
+
+comm_message.created
+  → detect_email_intent
+      creates observation(intent=review_email)
+observation(intent=review_email)
+  → resolve_sender
+      creates principal/entity candidate
+observation(intent=review_email)
+  → fetch_thread_context
+      creates source(email_thread), observation(thread_summary)
+observation(intent=review_email)
+  → fetch_crm_context
+      creates action(crm.lookup), source(tool_result), observation(crm_summary)
+observation(intent=review_email)
+  → retrieve_relevant_memory
+      creates memory retrieval result
+thread_summary + crm_summary + memory_context
+  → draft_reply
+      creates artifact(email_draft), action(send_email proposed)
+
+This gives users and developers an intuitive way to see how the pack works.
+
+Pack docs should auto-generate:
+
+object types
+relation types
+behaviors
+triggers
+views
+capabilities
+outputs
+policies
+behavior graph
+
+This may become one of ActiveGraph’s best developer-experience features.
+
+⸻
+
+9. Frames Instead of Turn Coordinator
+
+“Turn Coordinator” is a useful temporary phrase, but it should not become a major primitive.
+
+Use Frame instead.
+
+A frame is a scope for related events.
+
+Examples:
+
+chat_turn
+email_review
+diligence_run
+research_review
+code_debug_session
+meeting_ingestion
+memory_reflection_pass
+
+A communication turn is just one kind of frame.
+
+Example:
+
+Frame: email_review_123
+  Event: email_received
+  Event: source_created
+  Event: comm_message_created
+  Event: sender_resolved
+  Event: crm_lookup_action_proposed
+  Event: crm_lookup_action_executed
+  Event: memory_retrieval_executed
+  Event: context_view_assembled
+  Event: response_candidate_created
+
+This keeps coordination ActiveGraph-native.
+
+⸻
+
+10. Prompt Context Assembly
+
+Prompt context should not be a global hidden blob.
+
+Each LLM behavior should receive a behavior-specific view.
+
+Prompt context is assembled from:
+
+current event
+frame events
+relevant sources
+observations
+tasks
+actions
+artifacts
+memory
+agent profile
+identity/auth context
+channel context
+domain context
+available capabilities
+policy constraints
+
+The important shift:
+
+Prompt assembly is behavior-local, not globally owned by chat.
+
+An LLM behavior is:
+
+prompt + view + capabilities + output schema + handler
+
+The model sees only the context selected by the behavior view and filtered by policy.
+
+⸻
+
+11. Memory Design
+
+Memory has two levels:
+
+Core:
+  memory_candidate
+Memory Gateway:
+  memory_item
+  memory retrieval
+  memory ranking
+  memory sync
+  external memory adapters
+
+Core memory
+
+Core only says:
+
+This might be worth remembering.
+
+It does not decide:
+
+whether to accept it
+where to store it
+how to retrieve it
+how to dedupe it
+how to expire it
+whether to sync to external memory
+
+Memory Gateway
+
+Memory Gateway manages:
+
+memory acceptance
+memory item creation
+memory retrieval
+memory ranking
+memory scoring
+memory sync
+external memory backends
+
+Possible backends:
+
+ActiveGraph native memory
+local vector store
+Postgres/pgvector
+Mem0
+Supermemory
+other memory APIs
+
+Principle:
+
+ActiveGraph-native memory is canonical. External memory systems are optional retrieval/indexing backends.
+
+External systems should not silently mutate assistant state.
+
+Every memory write/retrieval should be evented.
+
+When does chat use memory?
+
+Chat does not decide.
+
+Memory is invoked because a behavior’s view asks for memory.
+
+Example:
+
+behavior: draft_reply
+view:
+  memories:
+    query_from:
+      - sender
+      - company
+      - current_message
+      - thread_summary
+    types:
+      - relationship
+      - preference
+      - prior_decision
+    max_items: 8
+
+The view builder or Memory Gateway satisfies that memory section.
+
+⸻
+
+12. Tool / Capability Gateway
+
+Tool Gateway is one of the most important infrastructure packs.
+
+The model should not directly execute tools.
+
+Flow:
+
+model proposes tool call
+  → ActiveGraph records action proposed
+  → Tool Gateway normalizes call
+  → policy checks authorization
+  → Secrets/Credentials injects secrets if allowed
+  → tool/API/MCP executes
+  → result becomes source
+  → observations are extracted
+  → graph updates
+  → model receives result
+
+This preserves ActiveGraph’s identity.
+
+Without Tool Gateway, an assistant loop becomes:
+
+chat → LLM → tools → answer
+
+and the graph is only a logger.
+
+With Tool Gateway, it becomes:
+
+event → behavior → action proposed → policy → execution → result source → graph → response
+
+Tools vs actions
+
+Tool:
+  callable capability
+Action:
+  specific proposed/executed use of a capability
+
+Example:
+
+Tool:
+  gmail.send_email
+Action:
+  send this specific email to Shengkun with this body
+
+Permissions should usually attach to actions, not just tools.
+
+⸻
+
+13. APIs, MCP, Skills, and Tools
+
+APIs should be treated similarly to MCP.
+
+The common abstraction is capability provider.
+
+Capability providers include:
+
+local Python tools
+REST APIs
+SDK clients
+MCP servers
+provider-hosted tools
+browser tools
+shell/code execution
+webhooks
+skills
+
+All should pass through Tool Gateway.
+
+MCP
+
+MCP is a standardized external capability provider.
+
+MCP Adapter should:
+
+discover tools/resources/prompts
+register them as capabilities
+classify risk
+wrap calls as actions
+sanitize outputs
+enforce policy
+avoid exposing untrusted tool descriptions as hidden instructions
+
+APIs
+
+API Adapter should:
+
+register endpoint/client capabilities
+bind required secrets by reference
+validate input/output schemas
+classify risk
+record calls/results/errors
+rate limit safely
+retry safely
+
+Skills
+
+Skills should not replace packs.
+
+Definitions:
+
+Pack:
+  ActiveGraph-native capability module with schemas, behaviors, tools, policies, prompts.
+Tool:
+  callable operation.
+Action:
+  auditable proposed/executed use of a tool or workflow.
+Skill:
+  portable capability recipe: instructions, examples, scripts, resources, maybe tools.
+MCP server:
+  external provider of tools/resources/prompts.
+Memory backend:
+  storage/retrieval system for durable context.
+
+A pack can include skills. A skill can use tools. But all execution should still produce ActiveGraph-visible actions/artifacts/events.
+
+⸻
+
+14. Secrets / Credentials
+
+Secrets should be handled by a dedicated Secrets/Credentials pack or infrastructure layer.
+
+Rules:
+
+secrets never enter model context
+tools receive secrets through runtime injection
+events record credential_ref, not secret value
+packs declare required secret scopes
+secret use is evented
+tool outputs are sanitized for leakage
+
+Possible objects:
+
+credential_ref
+secret_provider
+secret_scope
+secret_policy
+secret_usage_event
+credential_rotation_event
+
+Secret providers:
+
+environment variables
+local encrypted store
+cloud secret manager
+OAuth token store
+runtime settings
+
+Example:
+
+Tool call:
+  github.create_issue
+Tool Gateway:
+  requires credential scope github:repo:write
+Secrets Pack:
+  injects credential into execution context
+Model:
+  never sees credential
+Event log:
+  records credential_ref used
+
+⸻
+
+15. Communication Pack
+
+Chat is only one channel.
+
+Communication Pack should own channel-neutral communication semantics.
+
+Objects:
+
+comm_thread
+comm_message
+comm_participant
+comm_intent
+comm_response_candidate
+
+Channel packs are adapters:
+
+Chat Pack:
+  chat input → comm_message(channel=chat)
+Email Pack:
+  email → comm_message(channel=email)
+SMS Pack:
+  text → comm_message(channel=sms)
+Voice/Call Pack:
+  transcript segment → comm_message(channel=call)
+
+Communication Pack requires Core, but should not hard-depend on Identity/Auth, Agent Profile, Entity, Memory Gateway, or Tool Gateway.
+
+It can use them if installed.
+
+⸻
+
+16. Identity/Auth Pack
+
+Identity/Auth Pack answers:
+
+who is speaking?
+how confident are we?
+are they owner/non-owner?
+what can they see?
+what can they trigger?
+what requires approval?
+
+Objects:
+
+principal
+auth_context
+role
+permission
+delegation
+
+This enables different behavior for:
+
+owner
+admin
+trusted collaborator
+team member
+external contact
+customer
+investor
+unknown
+blocked
+
+Examples:
+
+Owner:
+  can access private context and approve actions
+External founder:
+  can receive professional replies but not private notes
+Unknown SMS sender:
+  restricted
+
+⸻
+
+17. Agent Profile Pack
+
+Agent Profile Pack owns:
+
+overall goal
+mission
+personality
+style
+standing instructions
+owner preferences
+domain preferences
+channel-specific behavior
+audience-specific behavior
+
+Objects:
+
+agent_profile
+owner_profile
+goal
+standing_instruction
+personality_profile
+preference
+
+Important distinctions:
+
+Goal:
+  persistent direction
+Task:
+  work item
+Personality:
+  communication style and behavioral defaults
+Standing instruction:
+  durable rule or preference
+
+Agent Profile context should be scoped.
+
+Examples:
+
+Owner chat:
+  direct, strategic, high-signal style
+External email:
+  concise, warm, professional style
+  privacy constraints
+Research review:
+  novelty/evidence standards
+Code review:
+  codebase conventions
+
+Agent identity should go into prompts through behavior-specific views, not as a single global system prompt blob.
+
+⸻
+
+18. Entity Pack
+
+Entity Pack should handle:
+
+entity
+entity_mention
+alias
+identifier
+merge_candidate
+merge_decision
+canonicalization
+dedupe
+split/revert
+confidence
+source attribution
+
+Do not put person and company into Core.
+
+Entity Pack can start generic:
+
+entity:
+  name
+  entity_type: person | organization | project | product | paper | repo | other
+  aliases
+  identifiers
+  metadata
+
+Then domain packs can add overlays:
+
+People Pack:
+  person profile, contact methods, relationship
+Organization Pack:
+  org profile, domain, parent/subsidiary
+VC Pack:
+  founder profile, investor profile, LP profile, company profile
+
+⸻
+
+19. Domain Packs
+
+Domain packs should be channel-agnostic.
+
+A request to run diligence should work whether it came from:
+
+chat
+email
+SMS
+API
+voice
+scheduled workflow
+
+Domain packs should not own communication, identity, tool execution, or memory. They should consume those capabilities if available.
+
+Diligence Pack
+
+Existing Diligence is the reference pack.
+
+Future bridge:
+
+diligence.document → core.source
+diligence.claim → core.observation
+diligence.memo → core.artifact
+diligence.risk → core.evaluation or observation
+
+Do not refactor Diligence immediately. Add a bridge first.
+
+Research Pack
+
+Potential objects:
+
+paper
+author
+venue
+method
+benchmark
+dataset
+claim
+result
+limitation
+idea_atom
+experiment
+research_direction
+
+Could support alien-science-style discovery:
+
+extract idea atoms
+model coherence
+model availability
+search high-coherence / low-availability combinations
+generate experiments
+log outcomes
+
+VC Pack
+
+Potential objects:
+
+company_profile
+founder_profile
+round
+valuation
+traction_metric
+memo
+thesis
+risk
+followup
+LP_update
+
+Codebase Pack
+
+Potential objects:
+
+repo
+file
+function
+class
+dependency
+issue
+PR
+test
+error
+architecture_decision
+code_change
+
+Team/Ops Pack
+
+Extends Core task with:
+
+project
+assignment
+dependency
+milestone
+review
+completion_evidence
+notification
+workload
+
+⸻
+
+20. How Packs Work Together
+
+The most elegant model is:
+
+Packs do not coordinate through a central manager.
+Packs coordinate by emitting graph-visible outputs that trigger other behaviors.
+
+Example: email review
+
+Email Adapter:
+  creates source + comm_message
+Communication behavior:
+  detects reply/review intent
+Identity behavior:
+  resolves sender/auth context
+Entity behavior:
+  resolves sender/company
+VC behavior:
+  sees founder/company context and prepares domain context
+Tool Gateway:
+  executes CRM lookup action if authorized
+Memory Gateway:
+  retrieves relationship/prior-decision memory requested by behavior view
+Agent Profile:
+  contributes external email style and privacy rules
+Draft behavior:
+  assembles view and creates email draft artifact
+Send behavior:
+  proposes external write action requiring approval
+
+No central turn coordinator is necessary.
+
+The runtime just processes events and behaviors.
+
+⸻
+
+21. Pack Dependencies and Optional Integrations
+
+Packs should eventually declare metadata:
+
+requires:
+  hard dependencies
+integrates_with:
+  optional packs that improve behavior
+emits:
+  object/action/artifact types produced
+satisfies:
+  capabilities or view needs it can satisfy
+permissions:
+  required capability/secret/action scopes
+
+Example:
+
+name: communication
+requires:
+  - core
+integrates_with:
+  - identity_auth
+  - agent_profile
+  - memory_gateway
+  - entity
+emits:
+  - comm_message
+  - comm_response_candidate
+
+Example:
+
+name: memory_gateway
+requires:
+  - core
+satisfies:
+  - behavior_view.memories
+contributes:
+  - memory_item
+  - memory_retrieval
+
+Example:
+
+name: tool_gateway
+requires:
+  - core
+integrates_with:
+  - secrets
+satisfies:
+  - capability.tool_call
+  - capability.api_call
+  - capability.mcp_call
+
+⸻
+
+22. Bundles
+
+A bundle is a preset collection of packs.
+
+It is not a pack with new ontology.
+
+Examples:
+
+Assistant Bundle
+
+core
+tool_gateway
+secrets
+memory_gateway
+agent_profile
+identity_auth
+communication
+chat
+
+Email Assistant Bundle
+
+assistant bundle
+email
+entity
+contacts/crm adapter
+
+VC Bundle
+
+assistant bundle
+entity
+diligence
+vc
+email
+meeting
+
+Research Bundle
+
+core
+tool_gateway
+memory_gateway
+sources
+artifacts
+research
+
+Bundles keep installation simple without making individual packs monolithic.
+
+⸻
+
+23. Updated Build Order
+
+Recommended build order:
+
+1. Core Pack v0.1
+   source, observation, task, action, artifact, memory_candidate, evaluation
+2. Behavior view/capability metadata improvements
+   make behavior context needs explicit and inspectable
+3. Behavior map / pack graph visualization
+   auto-generate how behaviors trigger each other
+4. Tool / Capability Gateway
+   local tools and Claude tool interception first; OpenAI next
+5. Secrets/Credentials Pack
+   credential references, scopes, runtime injection, usage events
+6. Memory Gateway
+   native memory item/retrieval first; external adapters later
+7. Agent Profile Pack
+   goals, standing instructions, personality, preferences
+8. Identity/Auth Pack
+   principals, roles, auth contexts, permissions
+9. Communication Pack
+   channel-neutral messages/threads/intents/response candidates
+10. Chat Adapter Pack
+   first usable assistant channel
+11. Email + CRM example workflow
+   proves context gathering before response
+12. Diligence-Core bridge
+   connect existing Diligence outputs to Core objects
+13. MCP/API adapters
+   plug into Tool Gateway
+14. Entity Pack
+   canonical people/orgs/entities and dedupe
+15. Domain packs
+   Research, VC, Codebase, Meeting, Team/Ops, Newsletter, Innovation
+
+Notably, behavior views and behavior maps should come before too many new packs, because they make the whole system understandable.
+
+⸻
+
+24. Strong First Demo
+
+The strongest first demo after Core should not be generic chat.
+
+It should be an email review with CRM context.
+
+Scenario:
+
+Owner opens founder email and asks:
+“Help me review this and draft a reply.”
+
+ActiveGraph should:
+
+1. Store email as source.
+2. Create comm_message.
+3. Resolve sender identity.
+4. Resolve company/entity if possible.
+5. Use Tool Gateway to call CRM/API if authorized.
+6. Retrieve relevant memories.
+7. Load owner’s external email style.
+8. Assemble behavior view.
+9. Summarize email.
+10. Explain relevant CRM/history context.
+11. Draft reply artifact.
+12. Propose send_email action requiring approval.
+
+This demo proves:
+
+communication
+identity
+profile
+memory
+tool gateway
+secrets
+API adapter
+context assembly via behavior view
+artifact generation
+approval-gated external action
+
+It shows why ActiveGraph is meaningfully different from ordinary chat + tools.
+
+⸻
+
+25. Key Invariants
+
+These should become design rules.
+
+1. Event-first
+
+Every meaningful operation is represented as an event before it changes graph state or external state.
+
+2. Behavior-local context
+
+Behaviors declare the context they need through views.
+
+3. Model proposes; runtime disposes
+
+The model can propose actions, tool calls, memory writes, and responses. ActiveGraph records, authorizes, executes, and observes.
+
+4. Secrets never enter model context
+
+Secrets are injected only into runtime/tool execution contexts.
+
+5. External capabilities go through Tool Gateway
+
+APIs, MCP, SDKs, local tools, provider tools, browser tools, shell tools, and skills all become ActiveGraph actions.
+
+6. Memory is candidate-first
+
+Durable memory should be proposed, evaluated, accepted, and then written/synced.
+
+7. Core stays small
+
+Core defines universal primitives only.
+
+8. Packs degrade gracefully
+
+Packs require only what they truly need and optionally integrate with others.
+
+9. Domain packs are channel-agnostic
+
+Research, Diligence, VC, Codebase, and Team/Ops should not care whether a request came from chat, email, SMS, voice, or API.
+
+10. Behavior maps make packs understandable
+
+A pack should be inspectable as a graph of behavior triggers and outputs.
+
+⸻
+
+26. Main Risks
+
+Risk 1: Over-modularization
+
+Too many packs too early could make the system hard to use.
+
+Mitigation:
+
+build bundles
+start with thin MVP packs
+keep Core small
+use behavior maps to make composition visible
+
+Risk 2: Core becomes a universal ontology
+
+If Core includes people, companies, claims, documents, projects, and workflows, it becomes bloated.
+
+Mitigation:
+
+Core v0.1 only:
+source, observation, task, action, artifact, memory_candidate, evaluation
+
+Risk 3: Tool Gateway becomes another orchestrator
+
+If Tool Gateway starts deciding domain workflows, it becomes too powerful.
+
+Mitigation:
+
+Tool Gateway only normalizes, authorizes, executes, and records capability calls.
+Domain behaviors decide what they need.
+
+Risk 4: Memory pollution
+
+If every inference becomes memory, assistant quality degrades.
+
+Mitigation:
+
+memory_candidate first
+acceptance/evaluation step
+source provenance
+external memory sync only after acceptance
+
+Risk 5: Hidden context
+
+If prompt assembly is opaque, ActiveGraph loses trust.
+
+Mitigation:
+
+behavior view specs
+context packet hashes/logs
+included object IDs
+redaction tracking
+
+Risk 6: Security/secrets leakage
+
+Tool/API/MCP use can expose secrets or private data.
+
+Mitigation:
+
+Secrets Pack
+credential refs only
+runtime injection
+policy gating
+output sanitization
+secret usage events
+
+Risk 7: Central coordinator reappears
+
+A “Turn Coordinator” class could become a hidden orchestration layer.
+
+Mitigation:
+
+use frames for scope
+behaviors for coordination
+views for context
+actions for execution
+policies for gates
+
+⸻
+
+27. What Is Novel Here?
+
+The novelty is not any single piece.
+
+Many systems have:
+
+tools
+memory
+agents
+graphs
+MCP
+skills
+workflow engines
+
+The novel combination is:
+
+event-sourced runtime
+reactive graph projection
+pack-based modular capabilities
+behavior-local context views
+auditable tool/action gateway
+candidate-first memory
+channel-neutral communication
+identity/profile/policy-aware prompts
+domain packs that compose through graph state
+
+The strongest claim:
+
+ActiveGraph turns assistant operations into inspectable graph state rather than hidden model context.
+
+That is a sharp distinction.
+
+⸻
+
+28. Updated Positioning
+
+Short version:
+
+ActiveGraph is an event-sourced, pack-based control plane for assistants. It makes communication, memory, tools, actions, and workflows graph-visible and auditable.
+
+Developer version:
+
+ActiveGraph lets developers build assistants where every message, tool call, memory write, task, artifact, and external action is stored as an event and projected into a live graph. Packs add modular capabilities without sacrificing provenance, replay, or policy control.
+
+Contrast:
+
+LangChain / CrewAI:
+  tool and agent orchestration
+Memory platforms:
+  context storage and retrieval
+MCP:
+  external capability protocol
+ActiveGraph:
+  event-sourced state/control layer across communication, memory, tools, policies, and workflows
+
+Wedge:
+
+Not better tool calling. Not better memory alone. Better control over long-running assistant state.
+
+⸻
+
+29. Final Recommendation
+
+The architecture should move forward, but with a simplification:
+
+Do not build a big coordinator.
+Do not add context_requirement yet.
+Do not make Core a universal ontology.
+Do not let chat own the assistant loop.
+
+Instead:
+
+Build Core small.
+Make behavior context explicit through views.
+Make behavior maps visible.
+Intercept tools/actions through Tool Gateway.
+Keep memory candidate-first.
+Keep communication channel-neutral.
+Use frames as execution scope.
+Let packs compose through graph-visible behavior outputs.
+
+The most important next implementation steps are:
+
+1. Core Pack v0.1
+2. Behavior view/capability metadata
+3. Behavior map visualization/docs
+4. Tool Gateway
+5. Secrets
+6. Memory Gateway
+7. Communication + Chat
+
+This gives ActiveGraph a coherent path from current runtime to useful assistant substrate while preserving the core philosophy:
+
+The log is the source of truth.
+The graph is the live world model.
+Behaviors react to events.
+Packs add capabilities.
+Views provide context.
+Actions record external effects.
+Memory is provenance-backed.
+Tools are policy-gated.
+Everything important is auditable.
