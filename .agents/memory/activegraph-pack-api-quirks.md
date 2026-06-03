@@ -67,6 +67,16 @@ To wire Secrets into Tool Gateway execution without violating the "no graph.obje
 
 **Why:** The secret value must never be stored in the graph. The ID is safe to pass through because it's a graph object reference, not the secret itself. use_count after a call with credential_ref_id set should be ≥ 2 (one manual + one call_executor injection).
 
+## patch_object does NOT re-trigger behaviors
+
+`graph.patch_object(id, patch)` is silent — it does NOT emit a new `object.created` event. If a behavior is meant to fire on a status change, the object must be CREATED with the target status. Fixtures testing status-change-triggered behaviors must create the object with the desired status directly rather than creating + patching.
+
+**Why:** The response_dispatcher behavior fires on `object.created` where status=approved. A fixture that created a "proposed" candidate and then patched to "approved" never triggered the dispatcher.
+
+## Pydantic model_config field name conflict
+
+Never name a `BaseModel` field `model_config` — it conflicts with Pydantic v2's internal `model_config` class variable and causes `TypeError: 'FieldInfo' object is not iterable` at import time. Rename to `llm_config` or similar.
+
 ## load_prompts_from_dir must be guarded
 
 ```python
