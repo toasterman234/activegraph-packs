@@ -201,6 +201,13 @@ class Action(BaseModel):
         default=None,
         description="ID of the frame this action belongs to.",
     )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Arbitrary key-value metadata. Can carry 'principal_id' for "
+            "permission_checker, audit context, etc."
+        ),
+    )
     risk_class: Literal["low", "medium", "high", "critical"] = Field(
         default="medium",
         description="Risk classification for policy/approval gating.",
