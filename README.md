@@ -1,4 +1,4 @@
-# activegraph-packs
+# activegraph-packs [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 An open-source collection of [ActiveGraph](https://pypi.org/project/activegraph/) packs, bundles, a Python demo server, and a React Inspector UI. Two goals: (1) a working demo of what a multi-pack assistant substrate looks like out of the box, and (2) a pack library where the best packs can be upstreamed into the activegraph repository itself.
 
@@ -153,20 +153,31 @@ The design principle: packs coordinate by emitting graph-visible outputs that tr
 
 ## Running fixtures
 
-Each pack ships fixture scenarios in `fixtures/*.yaml` that run without an LLM or API key. The demo server loads them all on startup. To run the test suite:
+Each pack ships fixture scenarios in `fixtures/*.yaml` that run without an LLM or API key. All behaviors run in deterministic mode (`deterministic=True`), so no credentials are needed.
+
+Run a single pack's fixture suite:
 
 ```bash
-pytest tests/
+python packs/core/fixtures/run_fixtures.py
+python packs/vc/fixtures/run_fixtures.py
+python packs/memory_gateway/fixtures/run_fixtures.py
+# pattern: python packs/<pack_name>/fixtures/run_fixtures.py
 ```
 
-To run a specific pack's fixtures:
+Run the cross-pack integration suites:
 
 ```bash
-pytest tests/ -k core
-pytest tests/ -k vc
+# Full cross-pack integration (all packs together)
+python packs/fixtures/cross_pack_integration.py
+
+# Communication + Chat + Email integration
+python packs/fixtures/comm_chat_email_integration.py
+
+# Identity + Profile + Entity integration
+python packs/fixtures/identity_profile_entity_integration.py
 ```
 
-All fixtures run in deterministic mode (`deterministic=True` on LLM behaviors), so no credentials are needed.
+The demo server also loads all fixture data on startup — `POST /reset` re-seeds from scratch if you want a clean run.
 
 ---
 
