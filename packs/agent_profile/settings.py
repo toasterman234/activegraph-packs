@@ -72,3 +72,32 @@ class AgentProfileSettings(BaseModel):
             "Sorted by priority (critical > high > medium > low)."
         ),
     )
+
+    default_profile_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Profile ID to use when auto-triggering context assembly "
+            "(e.g. from auth_context.created or frame.created). "
+            "If None, the first registered profile in the registry is used. "
+            "Needed when multiple profiles are registered and one should be default."
+        ),
+    )
+
+    auto_trigger_on_auth_context: bool = Field(
+        default=True,
+        description=(
+            "If True, profile_context_trigger fires on auth_context.created "
+            "and automatically creates a ProfileContextRequest using the "
+            "auth_context's principal_role and channel. This auto-wires "
+            "Identity Pack → Agent Profile Pack without manual request creation."
+        ),
+    )
+
+    auto_trigger_on_frame: bool = Field(
+        default=True,
+        description=(
+            "If True, frame_context_trigger fires on frame.created and "
+            "creates a ProfileContextRequest using the frame's channel. "
+            "Audience role defaults to 'owner' for frame-triggered assembly."
+        ),
+    )

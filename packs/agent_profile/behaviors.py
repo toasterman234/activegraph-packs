@@ -1,11 +1,21 @@
 """Agent Profile Pack behaviors — v0.1.
 
-One behavior covering profile context assembly:
+Seven behaviors covering profile registry maintenance and context assembly:
 
-1. profile_context_provider — on profile_context_request.created,
-   assembles a structured ProfileContextView from the referenced
-   AgentProfile, Goals, StandingInstructions, PersonalityProfiles,
-   and OwnerPreferences in the graph.
+1-5. Registry recorders — on each profile object type created, index in the
+     local _PROFILE_REGISTRY for fast access without graph.objects().
+
+6.   profile_context_provider — on profile_context_request.created, assembles
+     a structured ProfileContextView from the referenced AgentProfile, Goals,
+     StandingInstructions, PersonalityProfiles, and OwnerPreferences.
+
+7.   profile_context_trigger — on auth_context.created (Identity Pack), auto-
+     creates a ProfileContextRequest using the auth_context's principal_role
+     and channel. This auto-wires Identity → Agent Profile without the caller
+     needing to manually create a request.
+
+8.   frame_context_trigger — on frame.created (Core Pack), auto-creates a
+     ProfileContextRequest using the frame's channel and default audience_role.
 
 Design rules:
 - graph.objects() is UNSAFE in behaviors — use get_object(id) instead
@@ -31,11 +41,11 @@ Populated by profile_registry_recorder (fires on all profile object types).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from activegraph.packs import behavior
 
-from .object_types import ProfileContextView
+from .object_types import ProfileContextRequest, ProfileContextView
 from .settings import AgentProfileSettings
 
 
@@ -61,6 +71,20 @@ def _get_or_create_profile_entry(profile_id: str) -> dict[str, Any]:
 def clear_profile_registry() -> None:
     """Clear the local profile registry. Used in fixture teardown."""
     _PROFILE_REGISTRY.clear()
+
+
+def _get_default_profile_id(settings: AgentProfileSettings) -> Optional[str]:
+    """Return the profile_id to use for auto-triggered requests.
+
+    If settings.default_profile_id is set, use it.
+    Otherwise fall back to the first profile registered in the local registry.
+    Returns None if no profile has been registered yet.
+    """
+    if settings.default_profile_id:
+        return settings.default_profile_id
+    if _PROFILE_REGISTRY:
+        return next(iter(_PROFILE_REGISTRY))
+    return None
 
 
 # ------------------------------------------------------------------ behaviors
@@ -190,6 +214,121 @@ def preference_registry_recorder(event, graph, ctx, *, settings: AgentProfileSet
 
 
 @behavior(
+    name="profile_context_trigger",
+    on=["object.created"],
+    where={"object.type": "auth_context"},
+    creates=["profile_context_request"],
+)
+def profile_context_trigger(event, graph, ctx, *, settings: AgentProfileSettings):
+    """Auto-create a ProfileContextRequest when an AuthContext arrives.
+
+    On: object.created (auth_context) — Identity Pack
+    Creates: profile_context_request (if auto_trigger_on_auth_context is True)
+
+    Derives audience_role from auth_context.principal_role and channel from
+    auth_context.channel. Uses settings.default_profile_id or the first
+    registered profile in _PROFILE_REGISTRY.
+
+    This is the primary auto-wiring point between Identity Pack and Agent
+    Profile Pack — context is assembled without the caller needing to
+    explicitly create a ProfileContextRequest.
+    """
+    if not settings.auto_trigger_on_auth_context:
+        return
+
+    profile_id = _get_default_profile_id(settings)
+    if not profile_id:
+        return  # No profile registered yet — skip (will trigger when profile arrives)
+
+    obj = event.payload.get("object", {})
+    auth_ctx_id = obj.get("id")
+    auth_ctx_data = obj.get("data", {})
+
+    channel = auth_ctx_data.get("channel") or "unknown"
+    # Map principal_role → audience_role (same vocabulary, different semantic layer)
+    principal_role = auth_ctx_data.get("principal_role", "unknown")
+    frame_id = auth_ctx_data.get("frame_id")
+
+    # Suppress noisy dedup: only one request per (profile_id, channel, role) per frame.
+    # We use a simple deterministic key stored in metadata to allow callers to detect it.
+    request = graph.add_object(
+        "profile_context_request",
+        ProfileContextRequest(
+            profile_id=profile_id,
+            channel=channel,
+            audience_role=principal_role,
+            include_goals=True,
+            include_preferences=(principal_role in ("owner", "admin")),
+            frame_id=frame_id,
+            metadata={
+                "triggered_by": "auth_context",
+                "auth_context_id": auth_ctx_id,
+            },
+        ).model_dump(),
+    )
+
+    # Relation: auth_context → profile_context_request
+    try:
+        graph.add_relation("triggers_context_for", auth_ctx_id, request.id)
+    except Exception:
+        pass
+
+
+@behavior(
+    name="frame_context_trigger",
+    on=["object.created"],
+    where={"object.type": "frame"},
+    creates=["profile_context_request"],
+)
+def frame_context_trigger(event, graph, ctx, *, settings: AgentProfileSettings):
+    """Auto-create a ProfileContextRequest when a Frame is opened.
+
+    On: object.created (frame) — Core Pack
+    Creates: profile_context_request (if auto_trigger_on_frame is True)
+
+    Frames carry the interaction's channel. Audience role defaults to 'owner'
+    for frame-triggered assembly (frames are typically opened by the owner's
+    runtime session). Override by creating an explicit ProfileContextRequest.
+    """
+    if not settings.auto_trigger_on_frame:
+        return
+
+    profile_id = _get_default_profile_id(settings)
+    if not profile_id:
+        return
+
+    obj = event.payload.get("object", {})
+    frame_id = obj.get("id")
+    frame_data = obj.get("data", {})
+
+    channel = frame_data.get("channel") or "unknown"
+    # Frames are typically opened by the operator/owner session
+    audience_role = frame_data.get("audience_role") or "owner"
+
+    request = graph.add_object(
+        "profile_context_request",
+        ProfileContextRequest(
+            profile_id=profile_id,
+            channel=channel,
+            audience_role=audience_role,
+            include_goals=True,
+            include_preferences=True,
+            frame_id=frame_id,
+            metadata={
+                "triggered_by": "frame",
+                "frame_id": frame_id,
+            },
+        ).model_dump(),
+    )
+
+    # Relation: frame → profile_context_request
+    try:
+        graph.add_relation("triggers_context_for", frame_id, request.id)
+    except Exception:
+        pass
+
+
+@behavior(
     name="profile_context_provider",
     on=["object.created"],
     where={"object.type": "profile_context_request"},
@@ -208,6 +347,11 @@ def profile_context_provider(event, graph, ctx, *, settings: AgentProfileSetting
 
     Owner-facing contexts include mission (unless expose_mission_to_external=False).
     External-facing contexts suppress mission by default.
+
+    Fires on:
+    - Manually created ProfileContextRequest objects
+    - Auto-created requests from profile_context_trigger (auth_context.created)
+    - Auto-created requests from frame_context_trigger (frame.created)
     """
     obj = event.payload.get("object", {})
     request_id = obj.get("id")
@@ -335,5 +479,7 @@ BEHAVIORS = [
     instruction_registry_recorder,
     personality_registry_recorder,
     preference_registry_recorder,
+    profile_context_trigger,
+    frame_context_trigger,
     profile_context_provider,
 ]

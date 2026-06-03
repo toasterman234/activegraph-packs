@@ -1,4 +1,5 @@
 - [ActiveGraph Relation API field names](activegraph-relation-api.md) — r.source=relation_type, r.target=source_obj_id, r.type=target_obj_id (counterintuitive)
 - [ActiveGraph behavior trigger pattern](activegraph-behavior-triggers.md) — behaviors fire on graph.add_object(); call rt.run_until_idle() to drain cascading chains
 - [ActiveGraph Pack API Quirks](activegraph-pack-api-quirks.md) — Pack() no requires kwarg; @tool not callable; @behavior no description; graph.objects() UNSAFE in behaviors (use get_object)
-- [Action metadata field](action-metadata-field.md) — Core Pack's Action schema lacked a metadata field; permission_checker silently failed without it; added default_factory=dict
+- [Action metadata field](action-metadata-field.md) — Core Pack's Action schema needed metadata field; permission_checker silently failed without it; use `or {}` not `.get("field", {})` to guard against None
+- [Principal dedup registry pattern](principal-dedup-registry.md) — principal_resolver must check local registry by normalized sender_ref before creating; patch last_seen_at on revisit; comm_message path shares same registry

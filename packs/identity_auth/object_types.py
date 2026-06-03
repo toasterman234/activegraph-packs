@@ -88,6 +88,11 @@ class Principal(BaseModel):
         default=None,
         description="ISO 8601 timestamp of the most recent interaction.",
     )
+    seen_count: int = Field(
+        default=1,
+        ge=1,
+        description="Number of times this principal has been seen (incremented on revisit).",
+    )
     frame_id: Optional[str] = Field(default=None)
     metadata: dict[str, Any] = Field(default_factory=dict)
 

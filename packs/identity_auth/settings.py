@@ -18,7 +18,7 @@ class IdentitySettings(BaseModel):
         default_factory=list,
         description=(
             "List of identifier strings that unambiguously identify the owner. "
-            "Matched against Principal.identifiers values (case-insensitive). "
+            "Matched against sender_ref (case-insensitive). "
             "E.g. ['alice@example.com', '+15551234567', 'alice_slack_id']. "
             "A source whose sender_ref matches any of these gets role='owner'."
         ),
@@ -70,5 +70,15 @@ class IdentitySettings(BaseModel):
             "If True, permission_checker fires on action.created with "
             "status=proposed and validates the principal's role. "
             "Rejected actions are patched to status='rejected'."
+        ),
+    )
+
+    auto_deduplicate_principals: bool = Field(
+        default=True,
+        description=(
+            "If True, principal_resolver checks the local registry for an "
+            "existing principal with the same normalized sender_ref. On match, "
+            "patches last_seen_at and increments seen_count rather than "
+            "creating a new Principal. Set False to disable dedup (testing)."
         ),
     )

@@ -353,4 +353,13 @@ RELATION_TYPES = [
         target_types=("profile_context_view",),
         description="A context request is fulfilled by a context view.",
     ),
+    RelationType(
+        name="triggers_context_for",
+        source_types=("auth_context", "frame"),
+        target_types=("profile_context_request",),
+        description=(
+            "An auth_context or frame auto-triggers a profile context request. "
+            "Created by profile_context_trigger and frame_context_trigger behaviors."
+        ),
+    ),
 ]

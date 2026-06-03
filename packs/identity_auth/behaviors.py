@@ -1,15 +1,20 @@
 """Identity/Auth Pack behaviors — v0.1.
 
-Three behaviors covering the full identity lifecycle:
+Four behaviors covering the full identity lifecycle:
 
 1. principal_resolver — on source.created, extracts sender_ref and resolves
-   it to a Principal. Assigns role 'owner' if sender_ref matches any
-   owner_identifier in settings; otherwise assigns default_external_role.
+   it to a Principal. Reuses existing principals from the local registry by
+   normalized sender_ref (dedup). Assigns role 'owner' if sender_ref matches
+   any owner_identifier; otherwise assigns default_external_role.
 
-2. auth_context_builder — on principal.created, creates an AuthContext
+2. comm_message_principal_resolver — same logic as principal_resolver but
+   fires on comm_message.created (Communication Pack). Shares the registry
+   so both paths converge on the same Principal objects.
+
+3. auth_context_builder — on principal.created, creates an AuthContext
    that scopes the session for downstream behaviors.
 
-3. permission_checker — on action.created (status=proposed), validates
+4. permission_checker — on action.created (status=proposed), validates
    that the proposing principal's role allows the action. Rejects
    actions from blocked principals or those lacking required capabilities.
 
@@ -19,6 +24,8 @@ Design rules:
 - Principals never store passwords, tokens, or actual secrets
 - Permission checks use role hierarchy (Principal.can(action))
 - principal_id must be in action.metadata for permission_checker to fire
+- _PRINCIPAL_REGISTRY tracks normalized sender_ref → principal_id for dedup;
+  clear between tests with clear_principal_registry()
 """
 
 from __future__ import annotations
@@ -32,16 +39,120 @@ from .object_types import AuthContext, Principal
 from .settings import IdentitySettings
 
 
-# ------------------------------------------------------------------ helpers
+# ------------------------------------------------------------------ local registry
+# Maps normalized sender_ref → principal_id so principal_resolver can reuse
+# existing principals across multiple sources from the same sender.
+
+_PRINCIPAL_REGISTRY: dict[str, str] = {}  # normalized_sender_ref → principal_id
+
 
 def _normalize_identifier(s: str) -> str:
     return s.strip().lower()
+
+
+def clear_principal_registry() -> None:
+    """Clear the local principal registry. Used in fixture teardown."""
+    _PRINCIPAL_REGISTRY.clear()
+
+
+# ------------------------------------------------------------------ helpers
 
 
 def _matches_owner_identifiers(sender_ref: str, owner_identifiers: list[str]) -> bool:
     """Check if sender_ref matches any owner identifier (case-insensitive)."""
     norm = _normalize_identifier(sender_ref)
     return any(_normalize_identifier(oid) == norm for oid in owner_identifiers)
+
+
+def _extract_display_name(sender_ref: str) -> str:
+    """Best-effort display name from a sender_ref string."""
+    if "@" in sender_ref:
+        return sender_ref.split("@")[0].replace(".", " ").replace("_", " ").title()
+    return sender_ref
+
+
+# ------------------------------------------------------------------ shared resolution logic
+
+
+def _resolve_principal(
+    sender_ref: str,
+    channel: str,
+    frame_id: Optional[str],
+    source_id: str,
+    graph,
+    settings: IdentitySettings,
+) -> Optional[str]:
+    """Core principal resolution logic shared by source and comm_message paths.
+
+    Returns the principal_id (either existing or newly created).
+    Creates resolves_to(source_or_message → principal) relation.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    norm_ref = _normalize_identifier(sender_ref)
+
+    # --- Dedup: check if we already resolved this sender ---
+    if settings.auto_deduplicate_principals and norm_ref in _PRINCIPAL_REGISTRY:
+        existing_id = _PRINCIPAL_REGISTRY[norm_ref]
+        # Patch last_seen_at and bump seen_count on existing principal
+        try:
+            existing = graph.get_object(existing_id)
+            if existing:
+                current_count = existing.data.get("seen_count", 1)
+                graph.patch_object(existing_id, {
+                    "last_seen_at": now,
+                    "seen_count": current_count + 1,
+                })
+        except Exception:
+            pass
+
+        # Still create the resolves_to relation from this new source
+        try:
+            graph.add_relation("resolves_to", source_id, existing_id)
+        except Exception:
+            pass
+
+        return existing_id
+
+    # --- New sender: determine role and confidence ---
+    if _matches_owner_identifiers(sender_ref, settings.owner_identifiers):
+        role = "owner"
+        confidence = settings.owner_auth_confidence
+        name = sender_ref
+    else:
+        role = settings.default_external_role
+        confidence = settings.default_auth_confidence
+        name = _extract_display_name(sender_ref)
+
+    identifiers: dict[str, str] = {"ref": sender_ref}
+    if "@" in sender_ref:
+        identifiers["email"] = sender_ref  # enable entity-backed lookup later
+
+    principal = graph.add_object(
+        "principal",
+        Principal(
+            name=name,
+            role=role,
+            auth_confidence=confidence,
+            identifiers=identifiers,
+            channel=channel,
+            last_seen_at=now,
+            seen_count=1,
+            frame_id=frame_id,
+            metadata={"resolved_from_source": source_id},
+        ).model_dump(),
+    )
+
+    # Index in local registry for future dedup
+    if settings.auto_deduplicate_principals:
+        _PRINCIPAL_REGISTRY[norm_ref] = principal.id
+
+    # Create resolves_to relation: source → principal
+    try:
+        graph.add_relation("resolves_to", source_id, principal.id)
+    except Exception:
+        pass
+
+    return principal.id
 
 
 # ------------------------------------------------------------------ behaviors
@@ -57,64 +168,61 @@ def principal_resolver(event, graph, ctx, *, settings: IdentitySettings):
     """Resolve a source's sender_ref to a Principal.
 
     On: object.created (source)
-    Creates: principal with assigned role and auth_confidence
+    Creates: principal (on first encounter) OR patches existing (on revisit)
     Creates: resolves_to(source → principal) relation
 
-    If sender_ref matches any owner_identifier from settings, assigns
-    role='owner' with owner_auth_confidence. Otherwise assigns
-    default_external_role with default_auth_confidence.
+    Dedup: normalized sender_ref is checked against _PRINCIPAL_REGISTRY.
+    If found, patches last_seen_at + increments seen_count on the existing
+    Principal. Otherwise creates a new Principal and indexes it.
 
-    In v0.1 this always creates a new Principal (dedup is v0.2 via Entity Pack).
-    The caller should check existing principals before calling resolve if dedup
-    is important — the fixture tests use explicit IDs to avoid duplicates.
+    Role assignment:
+    - Matches owner_identifiers → role='owner', owner_auth_confidence
+    - Otherwise → default_external_role, default_auth_confidence
+
+    Stores email as an identifier so Entity Pack can link Principal to Entity.
     """
     obj = event.payload.get("object", {})
     source_id = obj.get("id")
     source_data = obj.get("data", {})
 
     sender_ref = source_data.get("sender_ref", "")
-    channel = source_data.get("channel", "unknown")
-    frame_id = source_data.get("frame_id")
-
     if not sender_ref:
         return
 
-    now = datetime.now(timezone.utc).isoformat()
+    channel = source_data.get("channel", "unknown")
+    frame_id = source_data.get("frame_id")
 
-    # Determine role and confidence
-    if _matches_owner_identifiers(sender_ref, settings.owner_identifiers):
-        role = "owner"
-        confidence = settings.owner_auth_confidence
-        name = sender_ref  # Will be overridden when entity link is made
-    else:
-        role = settings.default_external_role
-        confidence = settings.default_auth_confidence
-        # Try to extract a name from the sender_ref
-        # For emails: use the local part; for plain names: use as-is
-        if "@" in sender_ref:
-            name = sender_ref.split("@")[0].replace(".", " ").replace("_", " ").title()
-        else:
-            name = sender_ref
+    _resolve_principal(sender_ref, channel, frame_id, source_id, graph, settings)
 
-    principal = graph.add_object(
-        "principal",
-        Principal(
-            name=name,
-            role=role,
-            auth_confidence=confidence,
-            identifiers={"ref": sender_ref},
-            channel=channel,
-            last_seen_at=now,
-            frame_id=frame_id,
-            metadata={"resolved_from_source": source_id},
-        ).model_dump(),
-    )
 
-    # Create resolves_to relation: source → principal
-    try:
-        graph.add_relation("resolves_to", source_id, principal.id)
-    except Exception:
-        pass
+@behavior(
+    name="comm_message_principal_resolver",
+    on=["object.created"],
+    where={"object.type": "comm_message"},
+    creates=["principal"],
+)
+def comm_message_principal_resolver(event, graph, ctx, *, settings: IdentitySettings):
+    """Resolve a CommMessage's sender to a Principal.
+
+    On: object.created (comm_message) — Communication Pack
+    Creates: principal (on first encounter) OR patches existing (on revisit)
+    Creates: resolves_to(comm_message → principal) relation
+
+    Mirrors principal_resolver but consumes CommMessage objects.
+    Shares _PRINCIPAL_REGISTRY so both triggers converge on the same Principals.
+    """
+    obj = event.payload.get("object", {})
+    msg_id = obj.get("id")
+    msg_data = obj.get("data", {})
+
+    sender_ref = msg_data.get("sender_ref", "") or msg_data.get("from_address", "")
+    if not sender_ref:
+        return
+
+    channel = msg_data.get("channel", "unknown")
+    frame_id = msg_data.get("frame_id")
+
+    _resolve_principal(sender_ref, channel, frame_id, msg_id, graph, settings)
 
 
 @behavior(
@@ -132,6 +240,9 @@ def auth_context_builder(event, graph, ctx, *, settings: IdentitySettings):
 
     The AuthContext snapshots the principal's role at creation time,
     so downstream behaviors can check role without re-fetching the principal.
+
+    Only fires on NEW principals (not on revisit patches). The event carries
+    the object data as it was at creation time, not after patches.
     """
     if not settings.create_auth_context:
         return
@@ -195,7 +306,9 @@ def permission_checker(event, graph, ctx, *, settings: IdentitySettings):
     if action_data.get("status") != "proposed":
         return
 
-    principal_id = action_data.get("metadata", {}).get("principal_id", "")
+    # Safe metadata access — handle None if metadata wasn't set
+    existing_meta: dict = action_data.get("metadata") or {}
+    principal_id = existing_meta.get("principal_id", "")
     if not principal_id:
         return  # No principal context — skip check
 
@@ -212,9 +325,6 @@ def permission_checker(event, graph, ctx, *, settings: IdentitySettings):
     risk_class = action_data.get("risk_class", "medium")
 
     # Blocked principals: always reject
-    # Safe metadata expansion — handle None if schema had no default previously
-    existing_meta: dict = action_data.get("metadata") or {}
-
     if principal_role == "blocked":
         try:
             graph.patch_object(action_id, {
@@ -230,8 +340,7 @@ def permission_checker(event, graph, ctx, *, settings: IdentitySettings):
         return
 
     # Build a Principal-like object to use .can() logic
-    from .object_types import Principal as PrincipalModel
-    p = PrincipalModel(name="", role=principal_role)
+    p = Principal(name="", role=principal_role)
 
     # High/critical risk actions require owner or admin
     if risk_class in ("high", "critical") and principal_role not in ("owner", "admin"):
@@ -278,4 +387,9 @@ def permission_checker(event, graph, ctx, *, settings: IdentitySettings):
         pass
 
 
-BEHAVIORS = [principal_resolver, auth_context_builder, permission_checker]
+BEHAVIORS = [
+    principal_resolver,
+    comm_message_principal_resolver,
+    auth_context_builder,
+    permission_checker,
+]
