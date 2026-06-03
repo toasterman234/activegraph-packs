@@ -4,16 +4,50 @@ Meeting ingestion, transcript processing, decision extraction, and action item c
 
 ## Overview
 
-The Meeting Pack processes meeting transcripts into a structured graph of decisions, action items, and summaries. It handles both structured (`Speaker: text`) and plain-text transcript formats, flags decision and action-item segments with keyword matching, and automatically creates Core tasks from action items.
+The Meeting Pack processes meeting transcripts into a structured graph of decisions, action items, and summaries. It handles four transcript formats: JSON (Zoom/Teams/AssemblyAI export), structured `Speaker: text` lines, and plain-text with sentence splitting. Decisions and action items are detected by configurable keyword lists, and Core tasks are automatically created from action items.
 
-All behaviors in v0.1 use deterministic keyword-based processing — no LLM API key required.
+## Behavior Map
+
+```mermaid
+flowchart TD
+    SRC["source (kind=meeting_transcript)"]
+    MTG["meeting"]
+    SEG["transcript_segment(s)"]
+    SEG_D["transcript_segment (is_decision=True)"]
+    SEG_A["transcript_segment (is_action_item=True)"]
+    DEC["meeting_decision"]
+    AI["meeting_action_item"]
+    TASK["task (Core)"]
+    NOTE["meeting_note"]
+
+    SRC -->|object.created → transcript_ingester| MTG
+    SRC -->|transcript_ingester parses & creates| SEG
+    SEG -->|segment_of| MTG
+    MTG -->|object.created → meeting_summarizer| NOTE
+    NOTE -->|note_for| MTG
+    SEG_D -->|object.created → decision_extractor| DEC
+    DEC -->|decision_in| MTG
+    SEG_A -->|object.created → action_item_extractor| AI
+    AI -->|action_item_in| MTG
+    AI -->|auto_create_tasks_from_action_items → creates| TASK
+    AI -->|action_creates_task| TASK
+```
+
+## Transcript Formats
+
+| Priority | Format | Detection |
+|---|---|---|
+| 1 | JSON array `[{speaker, text, timestamp}, ...]` | Starts with `[` or `{` |
+| 2 | JSON object `{segments: [...]}` / `{utterances: [...]}` | AssemblyAI / Deepgram |
+| 3 | Structured text `Speaker: text` | Regex line match |
+| 4 | Plain text | Sentence-splitting fallback |
 
 ## Object Types
 
 | Name | Description |
 |---|---|
-| `meeting` | Meeting with participants, platform, and source reference |
-| `transcript_segment` | One speaker turn in a transcript |
+| `meeting` | Meeting with participants, platform, and status |
+| `transcript_segment` | One speaker turn, flagged for decisions/action items |
 | `meeting_decision` | A decision made during a meeting |
 | `meeting_action_item` | An action item with a linked Core task |
 | `meeting_note` | Meeting summary or notes |
@@ -27,22 +61,22 @@ All behaviors in v0.1 use deterministic keyword-based processing — no LLM API 
 | `action_item_extractor` | `transcript_segment.created` (is_action_item=True) | `meeting_action_item`, `task` |
 | `meeting_summarizer` | `meeting.created` | `meeting_note` |
 
-## Transcript Format
+## Relation Types
 
-**Structured** (preferred — auto-detected):
-```
-Alice: We decided to adopt feature flags going forward.
-Bob: I'll set up the integration by Thursday.
-```
-
-**Plain text** (falls back to sentence splitting):
-```
-The team agreed to use PostgreSQL 16. Alice will update the migration guide by Friday.
-```
+| Name | Source → Target | Description |
+|---|---|---|
+| `segment_of` | transcript_segment → meeting | Segment belongs to meeting |
+| `decision_in` | meeting_decision → meeting | Decision made in meeting |
+| `action_item_in` | meeting_action_item → meeting | Action item from meeting |
+| `note_for` | meeting_note → meeting | Note written for meeting |
+| `decision_from_segment` | meeting_decision → transcript_segment | Decision extracted from segment |
+| `action_item_from_segment` | meeting_action_item → transcript_segment | Action item from segment |
+| `action_creates_task` | meeting_action_item → task | Action item promoted to Core task |
+| `derived_from_source` | meeting → source | Meeting derived from transcript source |
 
 ## Tools
 
-- `ingest_transcript` — Ingest a meeting transcript
+- `ingest_transcript` — Ingest a meeting transcript (any format)
 - `create_meeting` — Create a meeting record without a transcript
 - `add_decision` — Manually add a decision to a meeting
 - `add_action_item` — Manually add an action item (creates Core task)
@@ -62,6 +96,8 @@ rt.load_pack(meeting_pack, settings=MeetingSettings(
 ))
 
 from packs.meeting.tools import ingest_transcript_fn
+
+# Structured text format
 ingest_transcript_fn(
     graph,
     title="Sprint Review",
@@ -70,21 +106,33 @@ ingest_transcript_fn(
     participants=["Alice", "Bob"],
     platform="zoom",
 )
+
+# Or JSON format (Zoom/AssemblyAI)
+import json
+ingest_transcript_fn(
+    graph,
+    title="All Hands Q3",
+    content=json.dumps([
+        {"speaker": "CEO", "text": "We decided to double down on enterprise.", "timestamp": 0.0},
+        {"speaker": "CTO", "text": "I'll finalize the roadmap by next week.", "timestamp": 12.5},
+    ]),
+    date="2026-07-01",
+)
 rt.run_until_idle()
 
 decisions = list(graph.objects(type="meeting_decision"))
 tasks = list(graph.objects(type="task"))
 ```
 
+## Dependencies
+
+- **Core Pack** (required): `task` from action items, `artifact` for notes
+- **Team/Ops Pack** (optional): tasks from action items flow into milestones/assignments
+- **Communication Pack** (optional): meeting as a communication channel
+- **Identity Pack** (optional): resolve participant refs to `principal` objects
+
 ## Running Fixtures
 
 ```bash
 python packs/meeting/fixtures/run_fixtures.py
 ```
-
-## Composing With Other Packs
-
-- **Core Pack** (required): tasks from action items, artifacts for notes
-- **Team/Ops Pack** (optional): tasks from action items flow into milestones/assignments
-- **Communication Pack** (optional): meeting as a communication channel
-- **Identity Pack** (optional): resolve participant refs to principals

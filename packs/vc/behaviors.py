@@ -269,14 +269,6 @@ def memo_drafter(event, graph, ctx, *, settings: VCSettings):
             "format": "markdown",
             "status": "draft",
         })
-        graph.add_object("investment_memo", {
-            "company_id": company_id,
-            "title": f"Investment Memo: {company_name}",
-            "content": content,
-            "thesis_summary": f"Early-stage evaluation of {company_name}.",
-            "status": "draft",
-            "artifact_id": artifact.id,
-        })
         memo_obj = graph.add_object("investment_memo", {
             "company_id": company_id,
             "title": f"Investment Memo: {company_name}",

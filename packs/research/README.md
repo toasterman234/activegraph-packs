@@ -8,6 +8,29 @@ The Research Pack provides a complete knowledge graph layer for academic and app
 
 All behaviors in v0.1 use deterministic mock stubs — no LLM API key required.
 
+## Behavior Map
+
+```mermaid
+flowchart TD
+    S["source (kind=research_paper)"]
+    P["paper"]
+    AU["author(s)"]
+    VE["venue"]
+    OBS["observation (claim facts)"]
+    IA["idea_atom"]
+    RD["research_direction"]
+    EX["experiment"]
+
+    S -->|object.created → paper_ingester| P
+    P -->|authored_by| AU
+    P -->|published_in| VE
+    P -->|object.created → claim_extractor| OBS
+    P -->|object.created → idea_atom_extractor| IA
+    IA -->|object.created, coherence≥threshold → hypothesis_generator| RD
+    IA -->|object.created, count≥min → research_direction_synthesizer| RD
+    RD -->|tests_direction ← experiment tool| EX
+```
+
 ## Object Types
 
 | Name | Description |
@@ -30,7 +53,22 @@ All behaviors in v0.1 use deterministic mock stubs — no LLM API key required.
 | `claim_extractor` | `paper.created` | `observation` (claim sentences) |
 | `idea_atom_extractor` | `paper.created` | `idea_atom` |
 | `hypothesis_generator` | `idea_atom.created` (coherence ≥ threshold) | `research_direction` |
-| `research_direction_synthesizer` | `idea_atom.created` | `research_direction` (cross-paper synthesis) |
+| `research_direction_synthesizer` | `idea_atom.created` (count ≥ min) | `research_direction` (cross-paper synthesis) |
+
+## Relation Types
+
+| Name | Source → Target | Description |
+|---|---|---|
+| `cites` | paper → paper | Citation |
+| `authored_by` | paper → author | Authorship |
+| `published_in` | paper → venue | Publication venue |
+| `uses_method` | paper → method | Method reference |
+| `reports_benchmark` | paper → benchmark | Benchmark result |
+| `uses_dataset` | paper → dataset | Dataset reference |
+| `proposes_idea` | paper → idea_atom | Idea extracted from paper |
+| `composes_direction` | idea_atom → research_direction | Atom contributes to direction |
+| `tests_direction` | experiment → research_direction | Experiment tests a direction |
+| `derived_from_source` | paper → source | Paper derived from source |
 
 ## Tools
 
@@ -53,9 +91,8 @@ rt.load_pack(research_pack, settings=ResearchSettings(
     max_ideas_per_paper=5,
 ))
 
-# Ingest a paper
 from packs.research.tools import ingest_research_paper_fn
-source = ingest_research_paper_fn(
+ingest_research_paper_fn(
     graph,
     title="Attention Is All You Need",
     abstract="We propose the Transformer architecture...",
@@ -71,18 +108,14 @@ ideas = list(graph.objects(type="idea_atom"))
 directions = list(graph.objects(type="research_direction"))
 ```
 
+## Dependencies
+
+- **Core Pack** (required): `observation`, `task`, `artifact`, `memory_candidate`
+- **Entity Pack** (optional): resolve author names to canonical `entity` objects
+- **Memory Gateway Pack** (optional): promote research claims to durable memory
+
 ## Running Fixtures
 
 ```bash
 python packs/research/fixtures/run_fixtures.py
 ```
-
-## Relation Types
-
-`cites`, `authored_by`, `published_in`, `uses_method`, `reports_benchmark`, `uses_dataset`, `proposes_idea`, `composes_direction`, `tests_direction`, `derived_from_source`
-
-## Composing With Other Packs
-
-- **Core Pack** (required): observations, tasks, artifacts, memory candidates
-- **Entity Pack** (optional): resolve author names to canonical Entity objects
-- **Memory Gateway Pack** (optional): promote key research claims to durable memory

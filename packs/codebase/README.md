@@ -4,7 +4,35 @@ Repository, issue, PR, and architecture decision tracking for ActiveGraph.
 
 ## Overview
 
-The Codebase Pack provides engineering workflow visibility by ingesting GitHub webhook events, repository manifests, file contents, and structured source objects into a rich graph of code knowledge. It tracks repos, files, issues, pull requests, architecture decisions, code changes, test results, and dependencies (with vulnerability detection).
+The Codebase Pack provides engineering workflow visibility by ingesting GitHub webhook events, repository manifests, file contents, and structured source objects into a rich graph of code knowledge. It tracks repos, issues, pull requests, architecture decisions, code changes, and dependencies with vulnerability detection.
+
+## Behavior Map
+
+```mermaid
+flowchart TD
+    WH["source (kind=github_webhook)"]
+    RM["source (kind=repo_manifest)"]
+    RF["source (kind=repo_file, ADR path)"]
+    IS["source (kind=issue)"]
+    PU["source (kind=github_push)"]
+
+    REPO["repo"]
+    ISSUE["issue"]
+    TASK["task (Core)"]
+    ADR["architecture_decision"]
+    CHANGE["code_change"]
+    DEP["dependency"]
+
+    RM -->|object.created → repo_ingester| REPO
+    WH -->|object.created → repo_ingester| REPO
+    REPO -->|object.created → dependency_auditor| DEP
+    IS -->|object.created → issue_tracker| ISSUE
+    WH -->|event=issues → issue_tracker| ISSUE
+    ISSUE -->|auto_create_issues_as_tasks → creates| TASK
+    RF -->|object.created, ADR path → adr_extractor| ADR
+    PU -->|object.created → change_summarizer| CHANGE
+    WH -->|event=push/pull_request → change_summarizer| CHANGE
+```
 
 ## Object Types
 
@@ -29,6 +57,20 @@ The Codebase Pack provides engineering workflow visibility by ingesting GitHub w
 | `adr_extractor` | `source.created` (kind=`repo_file`, ADR path) | `architecture_decision` |
 | `change_summarizer` | `source.created` (push/PR webhook) | `code_change` |
 | `dependency_auditor` | `repo.created` | `dependency` objects |
+
+## Relation Types
+
+| Name | Source → Target | Description |
+|---|---|---|
+| `file_in_repo` | code_file → repo | File belongs to repo |
+| `function_in_file` | code_function → code_file | Function defined in file |
+| `repo_depends_on` | repo → dependency | Declared dependency |
+| `issue_in_repo` | issue → repo | Issue belongs to repo |
+| `pr_in_repo` | pull_request → repo | PR belongs to repo |
+| `adr_in_repo` | architecture_decision → repo | ADR belongs to repo |
+| `change_in_repo` | code_change → repo | Change belongs to repo |
+| `test_for_repo` | test_result → repo | Test run for repo |
+| `derived_from_source` | codebase objects → source | Provenance link |
 
 ## Tools
 
@@ -55,22 +97,26 @@ from packs.codebase.tools import create_repo_fn, create_issue_fn
 create_repo_fn(graph, full_name="my-org/my-repo", language="python")
 rt.run_until_idle()
 
-create_issue_fn(graph, "my-org/my-repo", 1, "Fix null pointer in login flow", state="open", labels=["bug"])
+create_issue_fn(graph, "my-org/my-repo", 1, "Fix null pointer in login flow",
+                state="open", labels=["bug"])
 rt.run_until_idle()
+
+issues = list(graph.objects(type="issue"))
+tasks = list(graph.objects(type="task"))
 ```
 
 ## ADR Detection
 
 Files with paths matching `adr/`, `docs/adr`, `decisions/`, or `doc/arch` are automatically processed as ADRs. Customize via `adr_path_patterns` setting.
 
+## Dependencies
+
+- **Core Pack** (required): `task` created from issues, `observation`
+- **Team/Ops Pack** (optional): tasks from issues flow into assignments/milestones
+- **Identity Pack** (optional): resolve `author_ref` to `principal` objects
+
 ## Running Fixtures
 
 ```bash
 python packs/codebase/fixtures/run_fixtures.py
 ```
-
-## Composing With Other Packs
-
-- **Core Pack** (required): issues become tasks
-- **Team/Ops Pack** (optional): tasks from issues flow into assignment/milestones
-- **Identity Pack** (optional): resolve author refs to Principal objects

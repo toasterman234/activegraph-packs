@@ -8,6 +8,31 @@ The VC Pack provides a complete deal flow layer for venture capital workflows. I
 
 All behaviors in v0.1 use deterministic mock stubs — no LLM API key required.
 
+## Behavior Map
+
+```mermaid
+flowchart TD
+    MSG["comm_message (inbound, email)"]
+    OBS["observation (founder_outreach)"]
+    CO["company_profile"]
+    FO["founder_profile"]
+    MEMO["investment_memo + artifact"]
+    FU["followup + task (Core)"]
+    DR["deal_round"]
+    LP["lp_update + artifact"]
+    TM["traction_metric"]
+    RISK["deal_risk"]
+
+    MSG -->|object.created → founder_email_detector| OBS
+    OBS -->|object.created, kind=founder_outreach → company_enricher| CO
+    OBS -->|company_enricher| FO
+    CO -->|founded_by| FO
+    CO -->|object.created → memo_drafter| MEMO
+    CO -->|object.created → followup_tracker| FU
+    DR["deal_round (status=closing/closed)"] -->|object.created → lp_update_generator| LP
+    TM & RISK -->|tools: add_traction_metric / add_deal_risk| CO
+```
+
 ## Object Types
 
 | Name | Description |
@@ -30,11 +55,24 @@ All behaviors in v0.1 use deterministic mock stubs — no LLM API key required.
 | `company_enricher` | `observation.created` (founder_outreach) | `company_profile`, `founder_profile` |
 | `memo_drafter` | `company_profile.created` | `investment_memo`, `artifact` |
 | `followup_tracker` | `company_profile.created` | `followup`, `task` |
-| `lp_update_generator` | `deal_round.created` (notable status) | `lp_update`, `artifact` |
+| `lp_update_generator` | `deal_round.created` (status: term_sheet/closing/closed) | `lp_update`, `artifact` |
+
+## Relation Types
+
+| Name | Source → Target | Description |
+|---|---|---|
+| `founded_by` | company_profile → founder_profile | Founding relationship |
+| `raised_in` | company_profile → deal_round | Active fundraising round |
+| `reports_metric` | company_profile → traction_metric | Metric reported by company |
+| `memo_for` | investment_memo → company_profile | Memo written for a company |
+| `risk_in` | deal_risk → company_profile | Risk for this company |
+| `followup_for` | followup → company_profile | Follow-up for this company |
+| `founder_outreach_source` | founder_profile → source | Source of founder discovery |
+| `derived_from_comm` | company_profile/founder_profile → source | Profile derived from comm source |
 
 ## Tools
 
-- `ingest_founder_email` — Ingest a founder email as a comm_message
+- `ingest_founder_email` — Ingest a founder email as a `comm_message`
 - `create_deal_round` — Create a deal round for a company
 - `add_traction_metric` — Record ARR, MRR, DAU, or any business metric
 - `add_deal_risk` — Record a risk identified during evaluation
@@ -69,14 +107,15 @@ companies = list(graph.objects(type="company_profile"))
 memos = list(graph.objects(type="investment_memo"))
 ```
 
+## Dependencies
+
+- **Core Pack** (required): `task` for follow-ups, `artifact` for memos, `observation`
+- **Communication Pack** (required): provides `comm_message` object type
+- **Entity Pack** (optional): resolve founder names to canonical `entity` objects
+- **Identity Pack** (optional): link `founder_profile` to a `principal`
+
 ## Running Fixtures
 
 ```bash
 python packs/vc/fixtures/run_fixtures.py
 ```
-
-## Composing With Other Packs
-
-- **Core Pack** (required): tasks for follow-ups, artifacts for memos
-- **Communication Pack** (required): provides `comm_message` object type
-- **Entity Pack** (optional): resolve founder names to canonical Person entities

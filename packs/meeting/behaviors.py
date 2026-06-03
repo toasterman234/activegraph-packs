@@ -8,6 +8,12 @@ Behaviors:
 
 All LLM behaviors use deterministic mock stubs in v0.1.
 
+Transcript formats supported by transcript_ingester:
+  1. JSON array:  [{"speaker": "...", "text": "...", "timestamp": 0.0}, ...]
+  2. JSON object: {"segments": [...], "metadata": {...}}
+  3. Structured text: "Speaker: text" lines (Zoom/Teams plain export)
+  4. Plain text: paragraph/sentence splitting fallback
+
 Registries:
   _MEETING_REGISTRY: source_id → meeting_id
   _MEETING_SEGMENT_COUNT: meeting_id → segment_count
@@ -16,6 +22,7 @@ Registries:
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
 from typing import Optional
@@ -35,6 +42,61 @@ def clear_meeting_registry() -> None:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_json_transcript(content: str) -> list[dict] | None:
+    """Parse JSON transcript format (Zoom/Teams export).
+
+    Accepted shapes:
+      Array:  [{"speaker": "...", "text": "...", "timestamp": 0.0}, ...]
+      Object: {"segments": [...], "title": "...", "date": "..."}
+      Object: {"utterances": [...]}  (AssemblyAI / Deepgram style)
+
+    Returns list of segment dicts, or None if content is not valid JSON
+    or does not contain recognisable segment data.
+    """
+    stripped = content.strip()
+    if not (stripped.startswith("[") or stripped.startswith("{")):
+        return None
+    try:
+        parsed = json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+    raw: list = []
+    if isinstance(parsed, list):
+        raw = parsed
+    elif isinstance(parsed, dict):
+        raw = (
+            parsed.get("segments")
+            or parsed.get("utterances")
+            or parsed.get("turns")
+            or []
+        )
+
+    if not raw:
+        return None
+
+    segments = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text") or item.get("transcript") or item.get("content") or ""
+        speaker = (
+            item.get("speaker")
+            or item.get("speaker_label")
+            or item.get("name")
+            or "Participant"
+        )
+        timestamp = item.get("timestamp") or item.get("start") or item.get("start_time") or 0.0
+        if text:
+            segments.append({
+                "speaker": str(speaker),
+                "text": str(text),
+                "segment_index": i,
+                "timestamp_seconds": float(timestamp) if timestamp else None,
+            })
+    return segments if segments else None
 
 
 def _parse_structured_transcript(content: str) -> list[dict]:
@@ -160,11 +222,19 @@ def transcript_ingester(event, graph, ctx, *, settings: MeetingSettings):
     except Exception:
         return
 
-    # ── Parse transcript ───────────────────────────────────────────────────
-    if re.search(r"^[A-Za-z][^:]{1,40}:\s", content, re.MULTILINE):
-        raw_segments = _parse_structured_transcript(content)
-    else:
-        raw_segments = _parse_plain_transcript(content, settings.max_segments_per_meeting)
+    # ── Parse transcript — try formats in priority order ──────────────────
+    # 1. JSON (Zoom/Teams/AssemblyAI/Deepgram export)
+    # 2. Structured text "Speaker: text" lines
+    # 3. Plain text sentence-splitting fallback
+    raw_segments = (
+        _parse_json_transcript(content)
+        or (
+            _parse_structured_transcript(content)
+            if re.search(r"^[A-Za-z][^:]{1,40}:\s", content, re.MULTILINE)
+            else None
+        )
+        or _parse_plain_transcript(content, settings.max_segments_per_meeting)
+    )
 
     for seg_data in raw_segments[:settings.max_segments_per_meeting]:
         text = seg_data.get("text") or ""
@@ -180,6 +250,7 @@ def transcript_ingester(event, graph, ctx, *, settings: MeetingSettings):
                 "speaker": seg_data.get("speaker") or "Participant",
                 "text": text,
                 "segment_index": seg_data.get("segment_index") or 0,
+                "timestamp_seconds": seg_data.get("timestamp_seconds"),
                 "is_decision": has_decision,
                 "is_action_item": has_action,
             })

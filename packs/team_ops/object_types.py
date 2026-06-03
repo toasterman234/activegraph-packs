@@ -93,7 +93,7 @@ OBJECT_TYPES = [
 RELATION_TYPES = [
     RelationType(name="assigned_to", source_types=("assignment",), target_types=("task",),
                  description="Assignment links to the Core task."),
-    RelationType(name="task_depends_on", source_types=("task",), target_types=("task",),
+    RelationType(name="depends_on", source_types=("task",), target_types=("task",),
                  description="Task depends on another task."),
     RelationType(name="part_of_milestone", source_types=("task",), target_types=("milestone",),
                  description="Task is part of a Milestone."),

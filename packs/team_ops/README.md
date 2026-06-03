@@ -11,8 +11,33 @@ The Team/Ops Pack extends the Core Pack's task primitive with project management
 ```
 Core task  ←─ assigned_to ─── Assignment (Team/Ops)
 Core task  ←─ part_of_milestone ─── Milestone (Team/Ops)
-Core task  ←─ part_of_project ─── Project (Team/Ops)
+Core task  ←─ part_of_milestone, part_of_project ─── Project (Team/Ops)
 Core task  ←─ evidence_for ─── CompletionEvidence (Team/Ops)
+```
+
+## Behavior Map
+
+```mermaid
+flowchart TD
+    OBS_TC["observation (category=task_candidate)"]
+    OBS_DONE["observation (category=decision/fact, text contains 'done')"]
+    TASK["task (Core)"]
+    ASSIGN["assignment"]
+    MS["milestone"]
+    PRJ["project"]
+    CE["completion_evidence"]
+    RR["review_request"]
+
+    OBS_TC -->|object.created → task_triager| TASK
+    TASK -->|object.created, owner_ref set → assignment_suggester| ASSIGN
+    ASSIGN -->|assigned_to| TASK
+    MS -->|object.created → milestone_tracker| MS
+    MS -->|part_of_project| PRJ
+    TASK -->|part_of_milestone| MS
+    TASK -->|part_of_project| PRJ
+    OBS_DONE -->|object.created, metadata.task_id set → completion_verifier| CE
+    CE -->|evidence_for| TASK
+    ASSIGN -->|priority=critical + require_review → creates| RR
 ```
 
 ## Object Types
@@ -22,9 +47,9 @@ Core task  ←─ evidence_for ─── CompletionEvidence (Team/Ops)
 | `project` | Project grouping tasks and milestones |
 | `assignment` | Task-to-principal assignment record |
 | `milestone` | Milestone grouping tasks with a target date |
-| `workload_estimate` | Estimated workload for a person in a period |
+| `workload_estimate` | Estimated workload per person per period |
 | `completion_evidence` | Evidence that a task was completed |
-| `review_request` | Review request for a task or artifact |
+| `review_request` | Review/approval request for a task |
 
 ## Behaviors
 
@@ -32,8 +57,20 @@ Core task  ←─ evidence_for ─── CompletionEvidence (Team/Ops)
 |---|---|---|
 | `task_triager` | `observation.created` (task_candidate) | `task`, `assignment` |
 | `assignment_suggester` | `task.created` (owner_ref set) | `assignment` |
-| `milestone_tracker` | `milestone.created` | (updates registry) |
-| `completion_verifier` | `observation.created` (done/completed text) | `completion_evidence` |
+| `milestone_tracker` | `milestone.created` | *(updates registry)* |
+| `completion_verifier` | `observation.created` (done/completed, metadata.task_id) | `completion_evidence` |
+
+## Relation Types
+
+| Name | Source → Target | Description |
+|---|---|---|
+| `assigned_to` | assignment → task | Assignment links to the Core task |
+| `depends_on` | task → task | Task dependency |
+| `part_of_milestone` | task → milestone | Task is in a milestone |
+| `part_of_project` | task/milestone → project | Part of a project |
+| `evidence_for` | completion_evidence → task | Evidence for task completion |
+| `review_of` | review_request → task | Review request for a task |
+| `workload_for` | workload_estimate → assignment | Workload associated with assignment |
 
 ## Tools
 
@@ -67,17 +104,20 @@ submit_task_candidate_fn(
     priority="high",
 )
 rt.run_until_idle()
+
+tasks = list(graph.objects(type="task"))
+assignments = list(graph.objects(type="assignment"))
 ```
+
+## Dependencies
+
+- **Core Pack** (required): `task`, `observation`
+- **Meeting Pack** (optional): action items from meetings become tasks
+- **Codebase Pack** (optional): GitHub issues become tasks
+- **Identity Pack** (optional): resolve `principal_ref` to `principal`
 
 ## Running Fixtures
 
 ```bash
 python packs/team_ops/fixtures/run_fixtures.py
 ```
-
-## Composing With Other Packs
-
-- **Core Pack** (required): task primitive, observations
-- **Meeting Pack** (optional): action items from meetings become tasks
-- **Codebase Pack** (optional): GitHub issues become tasks
-- **Identity Pack** (optional): resolve principal_ref to identity
