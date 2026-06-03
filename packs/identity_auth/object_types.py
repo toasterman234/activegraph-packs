@@ -267,9 +267,9 @@ OBJECT_TYPES = [
 RELATION_TYPES = [
     RelationType(
         name="resolves_to",
-        source_types=("source",),
+        source_types=("source", "comm_message"),
         target_types=("principal",),
-        description="A source (message, event) resolves to a principal.",
+        description="A source or comm_message resolves to a principal.",
     ),
     RelationType(
         name="authenticated_by",

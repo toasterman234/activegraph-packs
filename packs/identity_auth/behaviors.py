@@ -357,9 +357,10 @@ def permission_checker(event, graph, ctx, *, settings: IdentitySettings):
             pass
         return
 
-    # Check execute capability for external/customer/unknown
+    # Check execute capability — collaborator role does NOT include execute,
+    # so only owner and admin can run tool/code/api/write actions.
     if action_kind in ("tool_call", "api_call", "external_write", "run_code"):
-        if not p.can("execute") and principal_role not in ("owner", "admin", "collaborator"):
+        if not p.can("execute"):
             try:
                 graph.patch_object(action_id, {
                     "status": "rejected",
@@ -387,9 +388,90 @@ def permission_checker(event, graph, ctx, *, settings: IdentitySettings):
         pass
 
 
+@behavior(
+    name="principal_entity_linker",
+    on=["object.created"],
+    where={"object.type": "principal"},
+    creates=[],
+)
+def principal_entity_linker(event, graph, ctx, *, settings: IdentitySettings):
+    """Link a newly resolved Principal to an existing Entity (if Entity Pack is loaded).
+
+    On: object.created (principal)
+    Creates: nothing — patches principal.entity_id and creates linked_to_entity relation
+    Side effects: principal.entity_id is patched when a match is found
+
+    Soft dependency on Entity Pack: imports _ENTITY_REGISTRY and
+    _identifier_overlap_score from packs.entity.behaviors. If Entity Pack is
+    not loaded, the behavior silently no-ops.
+
+    Matching logic:
+    1. Extract identifiers from principal (email, ref, etc.)
+    2. Scan Entity registry for exact identifier overlap (score=1.0)
+    3. On match: patch principal.entity_id, create linked_to_entity relation
+
+    This closes the Identity ↔ Entity composition loop so the same real-world
+    person/org is represented by one canonical Entity regardless of which
+    channel they contacted through.
+    """
+    # Soft import — Entity Pack may not be loaded
+    try:
+        from packs.entity.behaviors import (
+            _ENTITY_REGISTRY,
+            _identifier_overlap_score,
+        )
+    except ImportError:
+        return  # Entity Pack not installed — skip linking
+
+    if not _ENTITY_REGISTRY:
+        return  # No entities registered yet
+
+    obj = event.payload.get("object", {})
+    principal_id = obj.get("id")
+    principal_data = obj.get("data", {})
+
+    # Build identifier dict from principal (same format as Entity identifiers)
+    principal_identifiers: dict[str, str] = {}
+    raw_identifiers = principal_data.get("identifiers", {}) or {}
+    for key, val in raw_identifiers.items():
+        if key not in ("ref",) and val:  # "ref" is the raw sender_ref — less specific
+            principal_identifiers[key] = str(val).lower()
+    # Also treat email sender_refs directly
+    sender_ref = raw_identifiers.get("ref", "")
+    if sender_ref and "@" in sender_ref:
+        principal_identifiers.setdefault("email", sender_ref.lower())
+
+    if not principal_identifiers:
+        return  # No identifiers to match on
+
+    # Scan entity registry for exact identifier overlap
+    best_entity_id: Optional[str] = None
+    best_score = 0.0
+    for entity_id, entry in _ENTITY_REGISTRY.items():
+        score = _identifier_overlap_score(principal_identifiers, entry.get("identifiers", {}))
+        if score > best_score:
+            best_score = score
+            best_entity_id = entity_id
+        if score >= 1.0:
+            break  # Exact match — no need to scan further
+
+    if best_entity_id and best_score >= 1.0:
+        # Patch principal.entity_id
+        try:
+            graph.patch_object(principal_id, {"entity_id": best_entity_id})
+        except Exception:
+            pass
+        # Create linked_to_entity relation: principal → entity
+        try:
+            graph.add_relation("linked_to_entity", principal_id, best_entity_id)
+        except Exception:
+            pass
+
+
 BEHAVIORS = [
     principal_resolver,
     comm_message_principal_resolver,
     auth_context_builder,
+    principal_entity_linker,
     permission_checker,
 ]
