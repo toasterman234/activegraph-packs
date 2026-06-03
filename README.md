@@ -15,12 +15,14 @@ pip install -e ".[dev]"
 # 2. Install Node dependencies
 pnpm install
 
-# 3. Start the API server — this also launches the Python demo server as a subprocess
-pnpm --filter @workspace/api-server run dev
+# 3. Start the API server — also launches the Python demo server as a subprocess
+PORT=5000 pnpm --filter @workspace/api-server run dev
 
 # 4. In a second terminal, start the Inspector UI
-pnpm --filter @workspace/activegraph-ui run dev
+PORT=3000 pnpm --filter @workspace/activegraph-ui run dev
 ```
+
+Once both are running, open `http://localhost:3000` for the Inspector UI. The API server is at `http://localhost:5000` and the Python demo server at `http://localhost:7788`.
 
 No API key required. The demo server seeds the graph with fixture data from all loaded packs on startup and persists state to SQLite in `data/`.
 
