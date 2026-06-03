@@ -47,35 +47,68 @@ _frames: dict = {}          # frame_id -> {id, status, started_at, ended_at, eve
 def _ts() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-def _build_runtime():
-    """Create and seed a fresh runtime, register frame tracking."""
-    from bundles import build_assistant
 
-    rt = build_assistant()
+def _db_path() -> str:
+    """Path to the SQLite event-log file backing the demo runtime.
 
-    # Attach a listener to collect frame events
-    def _on_evt(evt):
-        fid = getattr(evt, "frame_id", None)
-        if fid and fid not in _frames:
-            _frames[fid] = {
-                "id": fid,
-                "status": "running",
-                "frame_type": "behavior",
-                "started_at": _ts(),
-                "ended_at": None,
-                "event_count": 0,
-                "events": [],
-            }
-        if fid and fid in _frames:
-            _frames[fid]["event_count"] += 1
-            _frames[fid]["events"].append(_event_to_dict(evt))
-            if evt.type in ("frame.completed", "frame.failed", "runtime.idle"):
-                _frames[fid]["status"] = "completed" if evt.type != "frame.failed" else "failed"
-                _frames[fid]["ended_at"] = _ts()
+    ActiveGraph persists the runtime as an append-only event log. We keep
+    it under <workspace>/data so it survives process restarts; the run is
+    resumed via Runtime.load on the next boot instead of re-seeded.
+    Override with the ACTIVEGRAPH_DB env var.
+    """
+    override = os.environ.get("ACTIVEGRAPH_DB")
+    if override:
+        return override
+    data_dir = os.path.join(_workspace, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    return os.path.join(data_dir, "activegraph_demo.sqlite")
 
-    rt.graph.add_listener(_on_evt)
 
-    # ── Seed demo objects ──────────────────────────────────────────────────
+def _memory_db_path() -> str:
+    """Path to the SQLite file backing the Memory Gateway's stored items.
+
+    Separate from the event-log store: the Memory Gateway keeps its own
+    SQLite backend. Pointing it at a file (instead of the default
+    ``:memory:``) makes stored memories durable across restarts too.
+    Override with the ACTIVEGRAPH_MEMORY_DB env var.
+    """
+    override = os.environ.get("ACTIVEGRAPH_MEMORY_DB")
+    if override:
+        return override
+    data_dir = os.path.join(_workspace, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    return os.path.join(data_dir, "activegraph_memory.sqlite")
+
+
+def _store_has_run(path: str) -> bool:
+    """True if `path` is an existing SQLite store with at least one run."""
+    if not os.path.exists(path):
+        return False
+    try:
+        from activegraph.store import SQLiteEventStore
+        return SQLiteEventStore.most_recent_run_id(path) is not None
+    except Exception:
+        return False
+
+
+def _wipe_store(path: str) -> list[str]:
+    """Delete the SQLite store and its WAL/SHM sidecars.
+
+    Returns a list of paths that could not be removed (empty on full success)
+    so callers can surface a failure instead of silently leaving stale data.
+    """
+    failed: list[str] = []
+    for p in (path, path + "-wal", path + "-shm"):
+        try:
+            if os.path.exists(p):
+                os.remove(p)
+        except OSError:
+            failed.append(p)
+    return failed
+
+
+def _seed_demo(rt) -> None:
+    """Add the initial demo objects to a fresh runtime."""
     rt.graph.add_object("source", {
         "kind": "chat_message",
         "content": "What is the current deal status for Northwind Robotics?",
@@ -101,6 +134,68 @@ def _build_runtime():
         "sender_ref": "user:alice",
     })
 
+
+def _build_runtime():
+    """Build the runtime, resuming from the SQLite event log if one exists.
+
+    On first boot (no store) we build a fresh assistant backed by a durable
+    SQLite store and seed the demo objects — those writes are persisted. On
+    every subsequent boot we resume the most recent run from the same store
+    via Runtime.load (which replays the event log to rebuild graph state),
+    then re-register the bundle packs so future events fire behaviors. This
+    means chat history and any added objects survive restarts instead of
+    being re-seeded from scratch.
+    """
+    from activegraph import Runtime
+    from bundles import build_assistant, load_assistant_packs
+    from packs.identity_auth.behaviors import rebuild_principal_registry
+    from packs.memory_gateway import MemoryGatewaySettings
+
+    db = _db_path()
+    mem_settings = MemoryGatewaySettings(backend_url=_memory_db_path())
+    resuming = _store_has_run(db)
+
+    if resuming:
+        rt = Runtime.load(db)
+        load_assistant_packs(rt, memory_gateway_settings=mem_settings)
+        # Replay rebuilds graph objects without firing behaviors, so the
+        # in-memory principal dedup registry is empty — repopulate it from
+        # the replayed principals to avoid creating duplicates on the next
+        # message from an already-known sender.
+        n = rebuild_principal_registry(rt.graph)
+        print(f"[demo_server] Resumed run {rt.run_id} from {db} "
+              f"({n} principals re-indexed)", flush=True)
+    else:
+        rt = build_assistant(persist_to=db, memory_gateway_settings=mem_settings)
+        print(f"[demo_server] Fresh run {rt.run_id} persisting to {db}", flush=True)
+
+    # Attach a listener to collect frame events
+    def _on_evt(evt):
+        fid = getattr(evt, "frame_id", None)
+        if fid and fid not in _frames:
+            _frames[fid] = {
+                "id": fid,
+                "status": "running",
+                "frame_type": "behavior",
+                "started_at": _ts(),
+                "ended_at": None,
+                "event_count": 0,
+                "events": [],
+            }
+        if fid and fid in _frames:
+            _frames[fid]["event_count"] += 1
+            _frames[fid]["events"].append(_event_to_dict(evt))
+            if evt.type in ("frame.completed", "frame.failed", "runtime.idle"):
+                _frames[fid]["status"] = "completed" if evt.type != "frame.failed" else "failed"
+                _frames[fid]["ended_at"] = _ts()
+
+    rt.graph.add_listener(_on_evt)
+
+    # Seed demo objects only on a fresh store; a resumed run already has
+    # them (and any later additions) replayed from the event log.
+    if not resuming:
+        _seed_demo(rt)
+
     rt.run_until_idle()
     return rt
 
@@ -114,11 +209,42 @@ def _get_rt():
     return _rt
 
 
-def _reset_rt():
+def _reset_rt() -> list[str]:
+    """Reset the runtime to the initial demo state.
+
+    Returns a list of store paths that could not be deleted (empty on success)
+    so the caller can report a partial reset rather than silently succeeding
+    while stale data survives.
+    """
     global _rt, _frames
     with _runtime_lock:
         _frames = {}
+        # Close the live store handle, then wipe the persisted event log so
+        # the rebuild starts from a fresh, re-seeded run rather than
+        # resuming the old one.
+        if _rt is not None and getattr(_rt.graph, "store", None) is not None:
+            try:
+                _rt.graph.store.close()
+            except Exception:
+                pass
+        # Clear module-level dedup state so the re-seed produces the full
+        # initial graph (these caches otherwise persist within the process
+        # and would suppress re-created principals / memory items). Clearing
+        # the memory backends also closes their SQLite connections so the
+        # files below can be deleted.
+        try:
+            from packs.identity_auth.behaviors import clear_principal_registry
+            clear_principal_registry()
+        except Exception:
+            pass
+        try:
+            from packs.memory_gateway.backend import clear_all_backends
+            clear_all_backends()
+        except Exception:
+            pass
+        failed = _wipe_store(_db_path()) + _wipe_store(_memory_db_path())
         _rt = _build_runtime()
+        return failed
 
 
 # ─── Serialisation helpers ────────────────────────────────────────────────────
@@ -213,11 +339,15 @@ def _relation_to_dict(rel) -> dict:
         data = _safe_json(data)
     except Exception:
         pass
+    # ActiveGraph's Relation stores fields counterintuitively:
+    #   rel.source = relation type label (e.g. "resolves_to")
+    #   rel.target = source object id
+    #   rel.type   = target object id
     return {
         "id": str(rel.id),
-        "type": str(rel.type),
-        "source_id": str(rel.source_id),
-        "target_id": str(rel.target_id),
+        "type": str(rel.source),
+        "source_id": str(rel.target),
+        "target_id": str(rel.type),
         "data": data,
     }
 
@@ -509,8 +639,15 @@ class Handler(BaseHTTPRequestHandler):
     # ── POST /reset ────────────────────────────────────────────────────────
 
     def _handle_reset(self):
-        _reset_rt()
-        self._send_json({"success": True, "message": "Runtime reset to initial demo state."})
+        failed = _reset_rt()
+        if failed:
+            self._send_json({
+                "success": False,
+                "message": "Runtime re-seeded, but some store files could not be deleted; stale data may remain.",
+                "undeleted_paths": failed,
+            })
+        else:
+            self._send_json({"success": True, "message": "Runtime reset to initial demo state."})
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────

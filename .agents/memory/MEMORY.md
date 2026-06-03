@@ -1,7 +1,1 @@
-- [ActiveGraph Relation API field names](activegraph-relation-api.md) — r.source=relation_type, r.target=source_obj_id, r.type=target_obj_id (counterintuitive)
-- [ActiveGraph behavior trigger pattern](activegraph-behavior-triggers.md) — behaviors fire on graph.add_object(); call rt.run_until_idle() to drain cascading chains
-- [ActiveGraph Pack API Quirks](activegraph-pack-api-quirks.md) — Pack() no requires kwarg; @tool not callable; @behavior no description; graph.objects() UNSAFE in behaviors (use get_object)
-- [Action metadata field](action-metadata-field.md) — Core Pack's Action schema needed metadata field; permission_checker silently failed without it; use `or {}` not `.get("field", {})` to guard against None
-- [Principal dedup registry pattern](principal-dedup-registry.md) — principal_resolver must check local registry by normalized sender_ref before creating; patch last_seen_at on revisit; comm_message path shares same registry
-- [Domain pack authoring patterns](domain-pack-authoring.md) — module-level registries for dedup; clear_*_registry() between fixtures; tools need _fn + @tool wrapper; behaviors fire on object.created only; all LLM behaviors are mock stubs in v0.1
-- [restart_workflow tool vs restartWorkflow callback](restart-workflow-tool.md) — use restartWorkflow() callback for artifact-managed workflows; the restart_workflow tool times out even when the server is healthy
+- [ActiveGraph persistence & resume](activegraph-persistence.md) — built-in event-sourced SQLite/Postgres store; replay does NOT fire behaviors so rebuild in-process registries; Relation field layout is counterintuitive.

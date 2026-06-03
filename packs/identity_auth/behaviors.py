@@ -55,6 +55,33 @@ def clear_principal_registry() -> None:
     _PRINCIPAL_REGISTRY.clear()
 
 
+def rebuild_principal_registry(graph) -> int:
+    """Repopulate the dedup registry from existing principals in `graph`.
+
+    The registry is module-level in-memory state. When a runtime is resumed
+    from a persisted event log via ``Runtime.load``, events are replayed to
+    rebuild graph objects WITHOUT firing behaviors, so this registry stays
+    empty — and a later message from an already-known sender would create a
+    duplicate principal. Calling this after a resume rebuilds the
+    normalized-sender → principal_id mapping so dedup keeps working across
+    process restarts.
+
+    Returns the number of principals indexed.
+    """
+    _PRINCIPAL_REGISTRY.clear()
+    count = 0
+    for obj in graph.all_objects():
+        if str(getattr(obj, "type", "")) != "principal":
+            continue
+        identifiers = (obj.data or {}).get("identifiers") or {}
+        ref = identifiers.get("ref")
+        if not ref:
+            continue
+        _PRINCIPAL_REGISTRY[_normalize_identifier(ref)] = obj.id
+        count += 1
+    return count
+
+
 # ------------------------------------------------------------------ helpers
 
 

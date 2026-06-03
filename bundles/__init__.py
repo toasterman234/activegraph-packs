@@ -23,7 +23,12 @@ Usage:
 
 from __future__ import annotations
 
-from bundles.assistant import ASSISTANT_BUNDLE, ASSISTANT_PACK_LIST, build_assistant
+from bundles.assistant import (
+    ASSISTANT_BUNDLE,
+    ASSISTANT_PACK_LIST,
+    build_assistant,
+    load_assistant_packs,
+)
 from bundles.email_assistant import (
     EMAIL_ASSISTANT_BUNDLE,
     EMAIL_ASSISTANT_PACK_LIST,
@@ -36,6 +41,7 @@ __all__ = [
     "ASSISTANT_BUNDLE",
     "ASSISTANT_PACK_LIST",
     "build_assistant",
+    "load_assistant_packs",
     "EMAIL_ASSISTANT_BUNDLE",
     "EMAIL_ASSISTANT_PACK_LIST",
     "build_email_assistant",

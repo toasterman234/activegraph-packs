@@ -40,6 +40,38 @@ ASSISTANT_BUNDLE = [
 ASSISTANT_PACK_LIST = ASSISTANT_BUNDLE
 
 
+def load_assistant_packs(
+    rt: Runtime,
+    *,
+    core_settings: CoreSettings | None = None,
+    tool_gateway_settings: ToolGatewaySettings | None = None,
+    secrets_settings: SecretsSettings | None = None,
+    memory_gateway_settings: MemoryGatewaySettings | None = None,
+    agent_profile_settings: AgentProfileSettings | None = None,
+    identity_settings: IdentitySettings | None = None,
+    communication_settings: CommunicationSettings | None = None,
+    chat_settings: ChatSettings | None = None,
+) -> Runtime:
+    """Register the Assistant Bundle packs onto an existing Runtime.
+
+    Factored out of ``build_assistant`` so the same pack set can be
+    re-registered onto a Runtime rebuilt via ``Runtime.load(...)`` when
+    resuming from a persisted SQLite event log. ``load_pack`` is
+    idempotent and does not re-add domain objects, so calling this on a
+    resumed runtime restores behaviors for future events without
+    duplicating replayed state.
+    """
+    rt.load_pack(core_pack, settings=core_settings or CoreSettings())
+    rt.load_pack(tool_gateway_pack, settings=tool_gateway_settings or ToolGatewaySettings())
+    rt.load_pack(secrets_pack, settings=secrets_settings or SecretsSettings())
+    rt.load_pack(memory_gateway_pack, settings=memory_gateway_settings or MemoryGatewaySettings())
+    rt.load_pack(agent_profile_pack, settings=agent_profile_settings or AgentProfileSettings())
+    rt.load_pack(identity_auth_pack, settings=identity_settings or IdentitySettings())
+    rt.load_pack(communication_pack, settings=communication_settings or CommunicationSettings())
+    rt.load_pack(chat_pack, settings=chat_settings or ChatSettings())
+    return rt
+
+
 def build_assistant(
     *,
     core_settings: CoreSettings | None = None,
@@ -51,6 +83,7 @@ def build_assistant(
     communication_settings: CommunicationSettings | None = None,
     chat_settings: ChatSettings | None = None,
     llm_provider=None,
+    persist_to: str | None = None,
 ) -> Runtime:
     """Create a Runtime with the Assistant Bundle loaded.
 
@@ -68,6 +101,11 @@ def build_assistant(
         communication_settings: Override CommunicationSettings.
         chat_settings: Override ChatSettings.
         llm_provider: LLM provider for LLM-backed behaviors (optional in v0.1).
+        persist_to: Optional path to a SQLite file. When provided, the
+            runtime attaches a durable event store so all events are
+            written to disk and the run can be resumed with
+            ``Runtime.load(path)``. When ``None`` the graph is in-memory
+            only (the historical default).
 
     Returns:
         A configured Runtime ready to run goals.
@@ -76,17 +114,22 @@ def build_assistant(
     kwargs = {}
     if llm_provider is not None:
         kwargs["llm_provider"] = llm_provider
+    if persist_to is not None:
+        kwargs["persist_to"] = persist_to
 
     rt = Runtime(graph, **kwargs)
 
-    rt.load_pack(core_pack, settings=core_settings or CoreSettings())
-    rt.load_pack(tool_gateway_pack, settings=tool_gateway_settings or ToolGatewaySettings())
-    rt.load_pack(secrets_pack, settings=secrets_settings or SecretsSettings())
-    rt.load_pack(memory_gateway_pack, settings=memory_gateway_settings or MemoryGatewaySettings())
-    rt.load_pack(agent_profile_pack, settings=agent_profile_settings or AgentProfileSettings())
-    rt.load_pack(identity_auth_pack, settings=identity_settings or IdentitySettings())
-    rt.load_pack(communication_pack, settings=communication_settings or CommunicationSettings())
-    rt.load_pack(chat_pack, settings=chat_settings or ChatSettings())
+    load_assistant_packs(
+        rt,
+        core_settings=core_settings,
+        tool_gateway_settings=tool_gateway_settings,
+        secrets_settings=secrets_settings,
+        memory_gateway_settings=memory_gateway_settings,
+        agent_profile_settings=agent_profile_settings,
+        identity_settings=identity_settings,
+        communication_settings=communication_settings,
+        chat_settings=chat_settings,
+    )
 
     return rt
 

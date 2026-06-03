@@ -179,6 +179,14 @@ class SqliteMemoryBackend:
         cursor = self._conn.execute("SELECT COUNT(*) FROM memory_items")
         return cursor.fetchone()[0]
 
+    def close(self) -> None:
+        """Close the underlying SQLite connection so the file handle is
+        released (required before deleting the DB file on some platforms)."""
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+
 
 # ------------------------------------------------------------------ factory
 
@@ -197,7 +205,8 @@ def get_backend(db_url: str = ":memory:") -> SqliteMemoryBackend:
 
 
 def clear_all_backends():
-    """Clear all backend instances. Used in tests."""
+    """Clear all backend instances and release their SQLite connections."""
     for backend in _backends.values():
         backend.clear()
+        backend.close()
     _backends.clear()

@@ -10,7 +10,7 @@
 
 ActiveGraph is a **reactive object graph runtime** for Python. You define *objects* (typed nodes in a graph), *relations* (typed edges between them), *behaviors* (reactive handlers that fire when objects are added or updated), and *tools* (callable capabilities packs expose). Packs are the unit of composition — each pack owns a namespace, registers its schemas, and wires its behaviors into the runtime.
 
-It is **not** a framework in the Rails/Django sense. There's no HTTP server, no ORM, no built-in persistence. It's closer to a low-level reactive engine: you build your domain logic in packs, wire packs into a runtime, and the runtime takes care of cascading behaviors and graph state. What you do with that state is entirely up to you.
+It is **not** a framework in the Rails/Django sense. There's no HTTP server and no ORM — but it *does* ship a durable persistence layer (a pluggable, event-sourced store with SQLite and Postgres backends; more on that below). It's closer to a low-level reactive engine: you build your domain logic in packs, wire packs into a runtime, and the runtime takes care of cascading behaviors and graph state. What you do with that state is entirely up to you.
 
 The closest analogies are:
 - **Datalog engines** (Datomic, XTDB) — because ActiveGraph is essentially a reactive triple store with triggers
@@ -52,7 +52,7 @@ This is genuinely elegant once it clicks. Your domain logic decomposes into smal
 
 **Schema-as-data is useful.** Defining object schemas as class attributes with type annotations means your graph is self-describing. The Inspector UI was able to enumerate object types, count instances per type, and display structured fields without any hand-rolled serialization — it just asked the runtime what it knew.
 
-**The runtime is fast enough to not think about.** Seeding 18 objects and 102 events happens in milliseconds. The graph is in-memory, behaviors fire synchronously, and there's no I/O overhead. For a demo server or test harness, this is excellent.
+**The runtime is fast enough to not think about.** Seeding 18 objects and 102 events happens in milliseconds. The graph projection is held in-memory and behaviors fire synchronously, so reads have no I/O overhead. When you attach a persistence backend, the runtime appends events to the store as they happen; for a demo server or test harness, this is excellent.
 
 **It's pure Python.** No Rust extensions, no native deps, no platform-specific installation quirks. `pip install activegraph` and you're running in seconds. This matters more than people admit.
 
@@ -146,8 +146,8 @@ Minor, but bites you on first use and the error message doesn't tell you what's 
 
 ### Didn't Go Smoothly
 - The `packs/email/__init__.py` file shadows Python's stdlib `email` module (the package is literally named `email`). Anything downstream that does `import email` for MIME handling breaks with an unhelpful AttributeError. Had to `sys.path.remove()` the `packs/` directory before stdlib imports in the demo server. This is an unavoidable naming collision if you want your pack named "email" — not ActiveGraph's fault, but worth knowing.
-- **No persistence layer.** The runtime's graph is purely in-memory. For a demo server, you restart the runtime and re-seed on every process start. For a real deployment, you need to design your own snapshotting/replay system. This is table stakes for any production agent system and the lack of even a simple SQLite persistence backend means you're writing plumbing before you can build product.
-- **No built-in event sourcing.** There's an event log (accessible via the demo server's `/trace` endpoint) but it's ephemeral. You can't replay events to reconstruct graph state, checkpoint the graph, or audit causality across sessions. Event sourcing would be a natural fit for the behavior cascade model.
+### Correction: Persistence Is Built In
+- **An earlier draft of this report claimed ActiveGraph had "no persistence layer" and was "purely in-memory." That was wrong.** ActiveGraph ships an event-sourced persistence layer out of the box (`activegraph/store/`) with pluggable backends — `SQLiteEventStore` and `PostgresEventStore`. You opt in with `Runtime(graph, persist_to="state.sqlite")` (or a `sqlite:///` / `postgres://` URL) and every event is appended to the store as behaviors cascade. `Runtime.load(path)` resumes the most-recent run by **replaying the event log** to rebuild the graph projection (replay rebuilds objects/relations *without* re-firing behaviors, so resume is fast and side-effect-free). `rt.save_state()` flushes on demand. The one real caveat: any in-process registries your own packs maintain (dedup caches, etc.) are *not* part of the graph, so you must repopulate them from the replayed objects on resume — the demo server does this for its principal registry.
 
 ---
 
@@ -166,7 +166,7 @@ These are agent-role frameworks: define agents, define workflows, watch agents h
 The reactive model scales better as complexity grows — you don't maintain a central orchestration script that breaks when you add a new capability. But it's harder to reason about for simple, linear tasks.
 
 ### vs. Semantic Kernel (Microsoft)
-Most similar in philosophy. Semantic Kernel also has a plugin/skill model, typed memory, and a graph-like concept of state. ActiveGraph is lighter and more Pythonic. Semantic Kernel has better production tooling (persistence, vector search, streaming). ActiveGraph's behavior cascade is more powerful than SK's function chaining.
+Most similar in philosophy. Semantic Kernel also has a plugin/skill model, typed memory, and a graph-like concept of state. ActiveGraph is lighter and more Pythonic. Both ship persistence — ActiveGraph via its event-sourced SQLite/Postgres store, SK via its memory/vector connectors; SK still leads on vector search and streaming. ActiveGraph's behavior cascade is more powerful than SK's function chaining.
 
 ### vs. Traditional Knowledge Graphs (Neo4j, RDFLib)
 Knowledge graphs store facts; they don't react to them. ActiveGraph is a knowledge graph with triggers. This is the key innovation: the graph is both a data store and a rule engine. You don't poll the graph for new facts and run policies manually — the policies fire automatically when the facts arrive. This is a substantially better model for event-driven agent systems.
@@ -224,9 +224,9 @@ The flip side: **debugging unexpected cascades** is hard. If adding object A tri
 
 **Suitable for:** research prototypes, internal demos, agent system PoCs, offline event processing, multi-domain reasoning kernels.
 
-**Not yet suitable for (in its current state):** production multi-tenant services (no persistence, no transaction semantics), high-throughput event ingestion (single-threaded behavior dispatch), systems requiring graph replay or audit trails.
+**Not yet suitable for (in its current state):** production multi-tenant services (no built-in transaction semantics across concurrent writers), high-throughput event ingestion (single-threaded behavior dispatch). Note that graph replay and audit trails *are* covered — the event-sourced store gives you both for free.
 
-The runtime is conceptually solid. The API surface needs polish. The missing pieces are all table stakes for production: persistence, concurrent access, observability hooks, and schema migration support.
+The runtime is conceptually solid, and persistence is already covered by the built-in event-sourced store. The API surface needs polish. The remaining gaps for production are concurrent access (multi-writer transaction semantics), observability hooks, and schema migration support.
 
 ---
 
@@ -240,7 +240,7 @@ These are observations, not demands — offered in the spirit of someone who jus
 
 **On the `@tool` DX:** The tool decorator should either make the method directly callable (calling via `_fn` is too internal-feeling) or document prominently that `@tool` is purely declarative and you call the underlying method directly in non-runtime contexts.
 
-**On persistence:** Even a `graph.checkpoint(path)` / `graph.restore(path)` that serializes to JSON would cover 80% of use cases. Not asking for a full event store — just "don't lose everything on restart."
+**On persistence:** This is already well-handled by the event-sourced store (`Runtime(graph, persist_to=...)` + `Runtime.load(path)`) — credit where due. The remaining ask is documentation discoverability: it took digging through `activegraph/store/` to realize this existed. A prominent "Persistence" section in the README, plus guidance on the resume-time gotcha (in-process registries maintained by your own packs aren't part of the replayed graph and must be rebuilt), would save builders real time.
 
 **On observability:** A `graph.subscribe(callback)` or `graph.on_mutation(callback)` hook would make the Inspector trivially accurate in real-time rather than polling. It would also make it possible to build reactive UIs, pub/sub bridges, and audit logs without patching the internals.
 
@@ -254,7 +254,7 @@ These are observations, not demands — offered in the spirit of someone who jus
 
 ActiveGraph is a genuinely interesting primitive. The reactive object graph model is better suited to multi-domain agent systems than any LLM-centric framework I've worked with. The pack composition model is clean. The behavior cascade is powerful and — once the mental model clicks — a joy to write.
 
-The rough edges are real but fixable: the relation API naming, the re-entrancy footgun, the `@tool` callability, the missing persistence. None of them are architectural — they're polish issues on top of a sound core.
+The rough edges are real but fixable: the relation API naming, the re-entrancy footgun, the `@tool` callability, and the under-documented (but present and capable) persistence layer. None of them are architectural — they're polish issues on top of a sound core.
 
 If you're building an agent system that needs to reason about structured world state across multiple domains (identity, memory, communication, permissions) and you want your logic to be composable, testable, and reactive rather than monolithic and procedural — ActiveGraph is worth taking seriously. Just budget time to learn the quirks documented above before diving into domain logic.
 
