@@ -28,7 +28,7 @@ The mental model that clicks once you get it:
 ```
 Pack = namespace + schemas + behaviors + tools
 Runtime = graph engine + behavior dispatcher
-Graph = live object store (not persisted by default)
+Graph = live object store (opt-in SQLite/Postgres persistence via built-in store)
 
 graph.add_object(type, data) → fires behavior chain
 rt.run_until_idle()           → drains all cascading reactions
@@ -145,9 +145,12 @@ Minor, but bites you on first use and the error message doesn't tell you what's 
 - Testing individual packs: instantiate the pack, add objects, call `run_until_idle()`, assert on graph state — clean and fast
 
 ### Didn't Go Smoothly
+
 - The `packs/email/__init__.py` file shadows Python's stdlib `email` module (the package is literally named `email`). Anything downstream that does `import email` for MIME handling breaks with an unhelpful AttributeError. Had to `sys.path.remove()` the `packs/` directory before stdlib imports in the demo server. This is an unavoidable naming collision if you want your pack named "email" — not ActiveGraph's fault, but worth knowing.
+
 ### Correction: Persistence Is Built In
-- **An earlier draft of this report claimed ActiveGraph had "no persistence layer" and was "purely in-memory." That was wrong.** ActiveGraph ships an event-sourced persistence layer out of the box (`activegraph/store/`) with pluggable backends — `SQLiteEventStore` and `PostgresEventStore`. You opt in with `Runtime(graph, persist_to="state.sqlite")` (or a `sqlite:///` / `postgres://` URL) and every event is appended to the store as behaviors cascade. `Runtime.load(path)` resumes the most-recent run by **replaying the event log** to rebuild the graph projection (replay rebuilds objects/relations *without* re-firing behaviors, so resume is fast and side-effect-free). `rt.save_state()` flushes on demand. The one real caveat: any in-process registries your own packs maintain (dedup caches, etc.) are *not* part of the graph, so you must repopulate them from the replayed objects on resume — the demo server does this for its principal registry.
+
+**An earlier draft of this report claimed ActiveGraph had "no persistence layer" and was "purely in-memory." That was wrong.** ActiveGraph ships an event-sourced persistence layer out of the box (`activegraph/store/`) with pluggable backends — `SQLiteEventStore` and `PostgresEventStore`. You opt in with `Runtime(graph, persist_to="state.sqlite")` (or a `sqlite:///` / `postgres://` URL) and every event is appended to the store as behaviors cascade. `Runtime.load(path)` resumes the most-recent run by **replaying the event log** to rebuild the graph projection (replay rebuilds objects/relations *without* re-firing behaviors, so resume is fast and side-effect-free). `rt.save_state()` flushes on demand. The one real caveat: any in-process registries your own packs maintain (dedup caches, etc.) are *not* part of the graph, so you must repopulate them from the replayed objects on resume — the demo server does this for its principal registry.
 
 ---
 
