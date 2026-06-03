@@ -124,12 +124,16 @@ def run_integration_test() -> bool:
 
     # --- Step 2: Propose a capability call (graph-driven execution) ---
     print("\n[2] Proposing capability call (low risk → auto-approved → call_executor fires)...")
+    # Include credential_ref_id so call_executor can inject credentials at execution time.
+    # policy_enforcer copies credential_ref_id into CapabilityApproval;
+    # call_executor calls resolve_and_audit_fn automatically before executing.
     call = graph.add_object("capability_call", {
         "provider_id": provider.id,
         "provider_name": "crm",
         "capability_name": "lookup_company",
         "input_data": {"company_name": "Northwind Robotics"},
         "credential_ref_name": "CRM_API_KEY",
+        "credential_ref_id": cred_ref.id,
         "risk_class": "low",
         "status": "proposed",
         "proposed_by": "integration_test",
@@ -154,6 +158,17 @@ def run_integration_test() -> bool:
     results = list(graph.objects(type="capability_result"))
     print(f"    capability_approvals: {len(approvals)} (created by policy_enforcer)")
     print(f"    capability_results: {len(results)} (created by call_executor behavior)")
+
+    # Check credential injection happened during call_executor execution
+    # use_count starts at 1 (manual resolve above); call_executor injects → 2
+    cred_after_call = graph.get_object(cred_ref.id)
+    cred_use_count_after = cred_after_call.data.get("use_count", 0) if cred_after_call else 0
+    print(f"    CredentialRef use_count after call_executor: {cred_use_count_after} (should be ≥2)")
+
+    # Check output sanitization
+    result_sanitized = results[0].data.get("sanitized", False) if results else None
+    print(f"    CapabilityResult.sanitized={result_sanitized} "
+          f"(False expected: mock output has no secret patterns)")
 
     # --- Step 4: Inspect Core pipeline ---
     print("\n[4] Inspecting Core pipeline (source → observations → candidates)...")
@@ -226,10 +241,26 @@ def run_integration_test() -> bool:
         if expected_rel not in relation_types:
             failures.append(f"Missing relation type '{expected_rel}'")
 
-    # Credential resolution audit
+    # Credential resolution audit — manual resolve (use_count ≥ 1)
     cred_obj = graph.get_object(cred_ref.id)
     if cred_obj and cred_obj.data.get("use_count", 0) < 1:
         failures.append("CredentialRef use_count was not updated by credential_resolution_recorder")
+
+    # Credential injection during call_executor — use_count should be ≥ 2
+    if cred_use_count_after < 2:
+        failures.append(
+            f"call_executor did not inject credentials (expected use_count ≥ 2, got {cred_use_count_after})"
+        )
+
+    # Output sanitization — result must have sanitized field (True or False, not None)
+    if result_sanitized is None:
+        failures.append("CapabilityResult missing 'sanitized' field — sanitizer not wired")
+
+    # Ensure no raw secrets in CapabilityResult.output_data
+    if results:
+        result_output = results[0].data.get("output_data", "")
+        if "sk-" in result_output or "AKIA" in result_output:
+            failures.append("CapabilityResult.output_data contains unsanitized secret patterns")
 
     print("\n" + "=" * 60)
     if failures:

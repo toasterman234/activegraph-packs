@@ -56,6 +56,17 @@ Inside a behavior, only these graph methods are safe:
 
 **Why:** `@behavior` will raise TypeError if unknown kwargs are passed.
 
+## Cross-pack credential injection pattern
+
+To wire Secrets into Tool Gateway execution without violating the "no graph.objects() in behaviors" rule:
+
+1. `CapabilityCall` carries both `credential_ref_name` AND `credential_ref_id`
+2. `policy_enforcer` copies both fields into `CapabilityApproval`
+3. `call_executor` reads them from the approval, calls `resolve_and_audit_fn(credential_ref_id=...)`, discards the secret after use
+4. `credential_resolution_recorder` updates `last_used_at`/`use_count` via `get_object(credential_ref_id)`
+
+**Why:** The secret value must never be stored in the graph. The ID is safe to pass through because it's a graph object reference, not the secret itself. use_count after a call with credential_ref_id set should be ≥ 2 (one manual + one call_executor injection).
+
 ## load_prompts_from_dir must be guarded
 
 ```python

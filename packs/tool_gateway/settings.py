@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 class ToolGatewaySettings(BaseModel):
     """Configuration for Tool Gateway Pack v0.1.
 
-    Controls how capability calls are policy-checked and recorded.
+    Controls how capability calls are policy-checked, executed, and recorded.
     """
 
     auto_approve_risk_classes: list[Literal["low", "medium", "high", "critical"]] = Field(
@@ -49,5 +49,24 @@ class ToolGatewaySettings(BaseModel):
         description=(
             "If True, result_sourcer behavior creates a Core source object from "
             "each CapabilityResult so downstream behaviors can extract observations."
+        ),
+    )
+
+    sanitize_output: bool = Field(
+        default=True,
+        description=(
+            "If True (default), call_executor runs the sanitizer on raw output "
+            "before storing in CapabilityResult. Redacts API keys, bearer tokens, "
+            "hex secrets, and password field values. Always enabled in production."
+        ),
+    )
+
+    inject_credentials: bool = Field(
+        default=True,
+        description=(
+            "If True, call_executor resolves and injects credentials from "
+            "Secrets Pack when a credential_ref_name is present on the call. "
+            "The resolved value is used for execution and immediately discarded — "
+            "never stored in the graph."
         ),
     )

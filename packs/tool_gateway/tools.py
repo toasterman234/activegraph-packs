@@ -53,6 +53,7 @@ def execute_capability_fn(
     input_data: dict[str, Any],
     call_id: str = "",
     frame_id: Optional[str] = None,
+    execution_context: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Dispatch a capability call to the appropriate handler.
 
@@ -68,17 +69,30 @@ def execute_capability_fn(
         input_data: Input parameters (no secrets)
         call_id: ID of the CapabilityCall being executed
         frame_id: Optional frame scope
+        execution_context: Runtime context injected by call_executor.
+            May contain a resolved 'credential' value for authenticated calls.
+            The credential is used here and NEVER persisted or returned.
 
     Returns:
         Dict with: output_data (str), error (str|None),
-                   success (bool), executed_at (str)
+                   success (bool), executed_at (str),
+                   credential_injected (bool)
     """
     now = datetime.now(timezone.utc).isoformat()
     key = f"{provider_name}.{capability_name}"
+    ctx = execution_context or {}
+    credential_injected = "credential" in ctx  # True if Secrets Pack injected a value
 
     try:
         if key in _LOCAL_REGISTRY:
-            result = _LOCAL_REGISTRY[key](**input_data)
+            # Registered handlers receive input_data kwargs.
+            # They may also receive execution_context if they accept it,
+            # but most handlers are simple and do not need it.
+            handler = _LOCAL_REGISTRY[key]
+            try:
+                result = handler(**input_data, execution_context=ctx)
+            except TypeError:
+                result = handler(**input_data)
             output_str = json.dumps(result) if not isinstance(result, str) else result
         else:
             # No handler registered — return a structured mock for testing
@@ -95,6 +109,7 @@ def execute_capability_fn(
             "error": None,
             "success": True,
             "executed_at": now,
+            "credential_injected": credential_injected,
         }
 
     except Exception as exc:
@@ -103,6 +118,7 @@ def execute_capability_fn(
             "error": f"{type(exc).__name__}: {exc}",
             "success": False,
             "executed_at": now,
+            "credential_injected": credential_injected,
         }
 
 

@@ -87,6 +87,13 @@ class CapabilityCall(BaseModel):
         default=None,
         description="Name of credential reference (resolved by Secrets Pack at runtime).",
     )
+    credential_ref_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "ID of the CredentialRef graph object. Required for call_executor to "
+            "resolve and inject credentials via Secrets Pack and record the usage event."
+        ),
+    )
     risk_class: Literal["low", "medium", "high", "critical"] = Field(
         default="medium",
         description=(
@@ -132,6 +139,10 @@ class CapabilityApproval(BaseModel):
     capability_name: str = Field(default="")
     input_data: dict[str, Any] = Field(default_factory=dict)
     credential_ref_name: Optional[str] = Field(default=None)
+    credential_ref_id: Optional[str] = Field(
+        default=None,
+        description="Passed from CapabilityCall so call_executor can resolve credentials.",
+    )
     frame_id: Optional[str] = Field(default=None)
     policy_decision: str = Field(
         default="auto_approved",
