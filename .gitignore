@@ -50,3 +50,16 @@ Thumbs.db
 
 # ActiveGraph demo event-log store
 /data/
+
+# Secrets and credentials — never commit these
+.env
+.env.*
+.env.local
+.env.development
+.env.production
+*.key
+*.pem
+*.secret
+*.secrets
+*_secret
+*_secrets

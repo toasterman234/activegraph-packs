@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  fixtures:
+    name: Pack fixture suites
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      # ── Per-pack fixture suites ─────────────────────────────────────────────
+
+      - name: core fixtures
+        run: python packs/core/fixtures/run_fixtures.py
+
+      - name: tool_gateway fixtures
+        run: python packs/tool_gateway/fixtures/run_fixtures.py
+
+      - name: secrets fixtures
+        run: python packs/secrets/fixtures/run_fixtures.py
+
+      - name: memory_gateway fixtures
+        run: python packs/memory_gateway/fixtures/run_fixtures.py
+
+      - name: identity_auth fixtures
+        run: python packs/identity_auth/fixtures/run_fixtures.py
+
+      - name: agent_profile fixtures
+        run: python packs/agent_profile/fixtures/run_fixtures.py
+
+      - name: entity fixtures
+        run: python packs/entity/fixtures/run_fixtures.py
+
+      - name: communication fixtures
+        run: python packs/communication/fixtures/run_fixtures.py
+
+      - name: chat fixtures
+        run: python packs/chat/fixtures/run_fixtures.py
+
+      - name: email fixtures
+        run: python packs/email/fixtures/run_fixtures.py
+
+      - name: research fixtures
+        run: python packs/research/fixtures/run_fixtures.py
+
+      - name: vc fixtures
+        run: python packs/vc/fixtures/run_fixtures.py
+
+      - name: codebase fixtures
+        run: python packs/codebase/fixtures/run_fixtures.py
+
+      - name: team_ops fixtures
+        run: python packs/team_ops/fixtures/run_fixtures.py
+
+      - name: meeting fixtures
+        run: python packs/meeting/fixtures/run_fixtures.py
+
+      - name: bridges fixtures
+        run: python packs/bridges/fixtures/run_fixtures.py
+
+      # ── Cross-pack integration suites ───────────────────────────────────────
+
+      - name: Cross-pack integration (Tool Gateway → Core → Memory Gateway)
+        run: python packs/fixtures/cross_pack_integration.py
+
+      - name: Cross-pack integration (Communication + Chat + Email + Identity)
+        run: python packs/fixtures/comm_chat_email_integration.py
+
+      - name: Cross-pack integration (Identity + Agent Profile + Entity)
+        run: python packs/fixtures/identity_profile_entity_integration.py
