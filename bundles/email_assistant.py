@@ -29,8 +29,8 @@ from bundles.assistant import (
 
 
 EMAIL_ASSISTANT_BUNDLE = ASSISTANT_BUNDLE + [
-    entity_pack,
     email_pack,
+    entity_pack,
 ]
 
 # Alias for backward compatibility
@@ -84,8 +84,8 @@ def build_email_assistant(
         llm_provider=llm_provider,
     )
 
-    rt.load_pack(entity_pack, settings=entity_settings or EntitySettings())
     rt.load_pack(email_pack, settings=email_settings or EmailSettings())
+    rt.load_pack(entity_pack, settings=entity_settings or EntitySettings())
 
     return rt
 

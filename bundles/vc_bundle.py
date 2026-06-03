@@ -15,7 +15,7 @@ for how domain packs compose through shared graph state.
 
 from __future__ import annotations
 
-from activegraph import Runtime
+from activegraph import Pack, Runtime
 from activegraph.packs import load_by_name
 
 from packs.bridges import pack as diligence_core_bridge_pack, DiligenceCoreBridgeSettings
@@ -38,18 +38,48 @@ from bundles.email_assistant import (
 )
 
 
-# Load the bundled diligence pack (ships with activegraph)
-try:
-    diligence_pack = load_by_name("diligence")
-    _HAS_DILIGENCE = True
-except Exception:
-    diligence_pack = None
-    _HAS_DILIGENCE = False
+# ---------------------------------------------------------------------------
+# Compatibility shim for Diligence pack
+# ---------------------------------------------------------------------------
+
+def _load_compat_diligence_pack() -> Pack | None:
+    """Load the bundled Diligence pack, stripping relation types that conflict
+    with Core Pack (specifically `derived_from`, which both declare).
+
+    Returns a new Pack instance with the conflicting relation type removed, or
+    None if the Diligence pack is not available.
+    """
+    try:
+        d = load_by_name("diligence")
+    except Exception:
+        return None
+
+    # Build a compat copy that omits Core-owned relation types so Core + Diligence
+    # can co-exist in the same Runtime without a PackConflictError.
+    _CORE_OWNED_RELATIONS = {"derived_from"}
+    return Pack(
+        name=d.name,
+        version=d.version,
+        description=d.description,
+        object_types=d.object_types,
+        relation_types=tuple(
+            r for r in d.relation_types if r.name not in _CORE_OWNED_RELATIONS
+        ),
+        behaviors=d.behaviors,
+        tools=d.tools,
+        policies=d.policies,
+        prompts=d.prompts,
+        settings_schema=d.settings_schema,
+    )
+
+
+_compat_diligence_pack = _load_compat_diligence_pack()
+_HAS_DILIGENCE = _compat_diligence_pack is not None
 
 
 VC_BUNDLE = EMAIL_ASSISTANT_BUNDLE + [
     p for p in [
-        diligence_pack if _HAS_DILIGENCE else None,
+        _compat_diligence_pack if _HAS_DILIGENCE else None,
         diligence_core_bridge_pack,
         vc_pack,
         meeting_pack,
@@ -57,7 +87,6 @@ VC_BUNDLE = EMAIL_ASSISTANT_BUNDLE + [
     if p is not None
 ]
 
-# Alias
 VC_PACK_LIST = VC_BUNDLE
 
 
@@ -81,6 +110,10 @@ def build_vc_assistant(
 
     The most feature-complete bundle. Combines email processing, entity
     tracking, investment diligence, founder CRM, and meeting ingestion.
+
+    The Diligence pack is loaded via a compatibility shim that strips its
+    `derived_from` relation declaration (already owned by Core Pack), allowing
+    both to co-exist in the same Runtime without a PackConflictError.
 
     The diligence-core bridge ensures that Diligence pack outputs (documents,
     claims, memos, risks) appear as Core primitives (sources, observations,
@@ -118,22 +151,12 @@ def build_vc_assistant(
         llm_provider=llm_provider,
     )
 
-    if _HAS_DILIGENCE and diligence_pack is not None:
+    if _HAS_DILIGENCE and _compat_diligence_pack is not None:
         try:
             from activegraph.packs.diligence import DiligenceSettings
-            rt.load_pack(diligence_pack, settings=DiligenceSettings())
-        except Exception as e:
-            # The Diligence pack (v1.0.5) declares `derived_from` which conflicts
-            # with Core Pack's `derived_from` relation type. When this happens the
-            # bridge still works — it subscribes to events by object type name and
-            # does not require the Diligence pack to be co-loaded.
-            # Users can inject Diligence-type objects directly or run Diligence in
-            # a separate graph and replicate events.
-            print(
-                f"  Note: Diligence pack could not be co-loaded with Core "
-                f"({type(e).__name__}: {e}). "
-                f"The bridge will accept diligence-type objects injected directly."
-            )
+            rt.load_pack(_compat_diligence_pack, settings=DiligenceSettings())
+        except Exception:
+            rt.load_pack(_compat_diligence_pack)
 
     rt.load_pack(diligence_core_bridge_pack, settings=DiligenceCoreBridgeSettings())
     rt.load_pack(vc_pack, settings=vc_settings or VCSettings())

@@ -42,6 +42,7 @@ def main():
         meeting_settings=MeetingSettings(
             auto_create_tasks_from_action_items=True,
         ),
+        llm_provider="mock",
     )
 
     graph = rt.graph
