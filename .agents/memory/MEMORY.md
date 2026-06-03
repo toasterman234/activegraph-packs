@@ -1,0 +1,2 @@
+- [ActiveGraph Relation API field names](activegraph-relation-api.md) — r.source=relation_type, r.target=source_obj_id, r.type=target_obj_id (counterintuitive)
+- [ActiveGraph behavior trigger pattern](activegraph-behavior-triggers.md) — behaviors fire on graph.add_object(); call rt.run_until_idle() to drain cascading chains

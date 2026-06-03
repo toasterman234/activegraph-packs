@@ -63,20 +63,47 @@ def _overlap_ratio(a: str, b: str) -> float:
 
 
 def _infer_category(text: str) -> Optional[str]:
-    """Infer an observation category from keyword patterns."""
+    """Infer an observation category from keyword patterns.
+
+    Returns one of: preference, instruction, decision, action_item,
+    risk, fact, question, intent — or None if no pattern matches.
+
+    Priority order matters: more specific patterns are checked first.
+    """
     text_lower = text.lower()
-    if any(w in text_lower for w in ("want", "need", "ask", "request", "prefer")):
-        return "intent"
-    if any(w in text_lower for w in ("decide", "agreed", "confirmed", "resolved")):
+
+    # Preference — explicit "prefer", "rather", "instead of"
+    if any(w in text_lower for w in ("prefer", "rather", "instead of", "favourite", "favorite")):
+        return "preference"
+
+    # Instruction — directives someone should follow
+    if any(w in text_lower for w in ("should", "must", "always", "never", "make sure", "ensure", "please", "requirement", "required")):
+        return "instruction"
+
+    # Decision — past resolutions
+    if any(w in text_lower for w in ("decide", "decided", "agreed", "confirmed", "resolved", "chosen", "chose")):
         return "decision"
-    if any(w in text_lower for w in ("should", "must", "will", "todo", "action item")):
+
+    # Action item — concrete to-do
+    if any(w in text_lower for w in ("todo", "to-do", "to do", "action item", "follow up", "follow-up")):
         return "action_item"
-    if any(w in text_lower for w in ("risk", "concern", "problem", "issue", "fail")):
+
+    # Risk — problems or concerns
+    if any(w in text_lower for w in ("risk", "concern", "problem", "issue", "fail", "failure", "danger", "critical")):
         return "risk"
-    if any(w in text_lower for w in ("says", "said", "mentioned", "noted", "stated")):
+
+    # Fact — reported statements
+    if any(w in text_lower for w in ("says", "said", "mentioned", "noted", "stated", "reported", "according")):
         return "fact"
+
+    # Question
     if "?" in text:
         return "question"
+
+    # Generic intent (wants/needs)
+    if any(w in text_lower for w in ("want", "need", "ask", "request")):
+        return "intent"
+
     return None
 
 

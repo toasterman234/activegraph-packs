@@ -1,0 +1,2 @@
+[activegraph.packs]
+core = packs.core:pack

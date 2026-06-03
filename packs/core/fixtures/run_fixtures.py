@@ -1,11 +1,14 @@
-"""Run Core Pack fixture scenarios without LLM or API keys.
+"""Run Core Pack fixture scenarios and assert expected_outputs.
+
+Reads each YAML fixture file from this directory, creates the declared
+objects in a fresh Graph, calls rt.run_until_idle() so Core Pack
+behaviors react, then asserts the expected_outputs section.
 
 Usage:
     python packs/core/fixtures/run_fixtures.py
 
-This script loads Core Pack into a Runtime and runs it against
-each fixture scenario, printing a trace summary and asserting
-expected outputs.
+All scenarios run without an LLM or API key.
+Exit code 0 if all assertions pass; exit code 1 if any fail.
 """
 
 from __future__ import annotations
@@ -13,177 +16,194 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# Allow running from repo root
-sys.path.insert(0, str(Path(__file__).parents[3]))
+# Allow running from repo root or from this directory
+_HERE = Path(__file__).parent
+sys.path.insert(0, str(_HERE.parents[2]))
 
+import yaml
 from activegraph import Graph, Runtime
 from packs.core import pack, CoreSettings
 
 
-def run_scenario(name: str, setup_fn) -> bool:
-    """Run a single scenario and return True if assertions pass."""
-    print(f"\n{'='*60}")
-    print(f"Scenario: {name}")
-    print(f"{'='*60}")
+# ------------------------------------------------------------------ helpers
+
+
+def _load_fixtures() -> list[tuple[str, dict]]:
+    """Load all YAML fixture files from this directory."""
+    files = sorted(_HERE.glob("*.yaml"))
+    return [(f.stem, yaml.safe_load(f.read_text())) for f in files]
+
+
+def _resolve_ref(ref: str, created_ids: dict[str, list[str]]) -> str | None:
+    """Resolve a "type[index]" reference like "artifact[0]" to an object ID."""
+    if "[" in ref:
+        t, rest = ref.rstrip("]").split("[", 1)
+        lst = created_ids.get(t, [])
+        try:
+            return lst[int(rest)]
+        except (IndexError, ValueError):
+            return None
+    return None
+
+
+def _run_fixture(name: str, scenario: dict) -> tuple[bool, list[str]]:
+    """Run one fixture scenario and return (passed, list_of_failures)."""
+    failures: list[str] = []
 
     graph = Graph()
     rt = Runtime(graph)
     rt.load_pack(pack, settings=CoreSettings())
 
-    try:
-        setup_fn(graph, rt)
-    except Exception as e:
-        print(f"  FAIL (setup error): {e}")
-        return False
+    # Create all declared objects
+    # Behaviors fire reactively as objects are added (Graph emits events
+    # and Runtime dispatches them). We collect and call run_until_idle()
+    # at the end to ensure all cascading behavior runs complete.
+    created_ids: dict[str, list[str]] = {}
 
-    # Print object counts
-    counts: dict[str, int] = {}
-    for obj_type in ["source", "observation", "task", "action", "artifact",
-                      "memory_candidate", "evaluation"]:
-        objs = list(graph.objects(type=obj_type))
-        counts[obj_type] = len(objs)
-        if objs:
-            print(f"  {obj_type}: {len(objs)} object(s)")
-            for o in objs[:3]:  # show first 3
-                preview = str(o.data)[:80]
-                print(f"    - {preview}...")
+    for obj_spec in scenario.get("objects", []):
+        obj_type = obj_spec["type"]
+        obj_data = obj_spec["data"]
 
-    return True
+        obj = graph.add_object(obj_type, obj_data)
+        created_ids.setdefault(obj_type, []).append(obj.id)
 
+    # Let all reactive behaviors run to completion
+    rt.run_until_idle()
 
-# ---------------------------------------------------------------- Scenario 1
+    # Create any explicitly declared relations (after behaviors have run,
+    # so behavior-created objects are available)
+    for rel_spec in scenario.get("relations", []):
+        rel_type = rel_spec["type"]
+        src_id = _resolve_ref(rel_spec.get("source", ""), created_ids)
+        tgt_id = _resolve_ref(rel_spec.get("target", ""), created_ids)
+        if src_id and tgt_id:
+            try:
+                graph.add_relation(rel_type, src_id, tgt_id)
+            except Exception as e:
+                failures.append(f"  Failed to create relation {rel_type}: {e}")
 
-def scenario_chat_observation_task(graph, rt):
-    """Chat message → observations → memory candidates."""
+    rt.run_until_idle()
 
-    # Pre-create an open task that the observation should link to
-    task = graph.add_object("task", {
-        "title": "Build a user authentication system",
-        "description": "Implement login, logout, and session management.",
-        "status": "active",
-        "priority": "high",
-        "source_observation_ids": [],
-        "owner_ref": None,
-        "due_at": None,
-        "metadata": {},
-    })
-    print(f"  Pre-created task: {task.id}")
+    # Gather final graph state
+    all_objects = list(graph.objects())
+    by_type: dict[str, list] = {}
+    for o in all_objects:
+        by_type.setdefault(o.type, []).append(o)
 
-    # Run a goal that creates a source
-    rt.run_goal("Process: User prefers JWT tokens for authentication. Build login this week.")
+    all_relations = list(graph.relations())
 
-    # Manually create a source to demonstrate extraction
-    source = graph.add_object("source", {
-        "kind": "chat_message",
-        "content": (
-            "I really prefer using JWT tokens for authentication rather than sessions. "
-            "We should implement the login system this week. "
-            "Please make sure it handles expired tokens gracefully. "
-            "That is a critical requirement for the project."
-        ),
-        "channel": "chat",
-        "sender_ref": "user_owner",
-        "frame_id": "frame_001",
-        "url": None,
-        "metadata": {"session_id": "sess_abc123"},
-    })
-    print(f"  Created source: {source.id}")
+    # In ActiveGraph's Relation object:
+    #   r.source = the relation type name (e.g. "grounds", "produces")
+    #   r.target = the source object ID
+    #   r.type   = the target object ID
+    # (The field naming is counterintuitive but confirmed by inspection.)
+    relation_types_in_graph = {r.source for r in all_relations}
 
-    # The observation_extractor and task_linker behaviors fire reactively
-    # in a full runtime; here we show the objects were created.
-    print(f"  Done. Graph has {sum(1 for _ in graph.objects())} objects total.")
+    # ---- Assert expected_outputs ----
+    expected = scenario.get("expected_outputs", {})
 
+    # --- observations ---
+    if "observations" in expected:
+        exp = expected["observations"]
+        actual_obs = by_type.get("observation", [])
+        count = len(actual_obs)
 
-# ---------------------------------------------------------------- Scenario 2
+        if "min_count" in exp and count < exp["min_count"]:
+            failures.append(
+                f"  observations: expected >= {exp['min_count']}, got {count}"
+            )
+        if "max_count" in exp and count > exp["max_count"]:
+            failures.append(
+                f"  observations: expected <= {exp['max_count']}, got {count}"
+            )
+        if "at_least_one_with" in exp:
+            for field, value in exp["at_least_one_with"].items():
+                matches = [o for o in actual_obs if o.data.get(field) == value]
+                if not matches:
+                    actual_vals = [o.data.get(field) for o in actual_obs]
+                    failures.append(
+                        f"  observations: expected at least one with {field}={value!r}; "
+                        f"actual {field} values: {actual_vals}"
+                    )
 
-def scenario_tool_result_source(graph, rt):
-    """Tool result → source → observations."""
-    rt.run_goal("Process: Look up company Northwind Robotics.")
+    # --- memory_candidates ---
+    if "memory_candidates" in expected:
+        exp = expected["memory_candidates"]
+        actual_mc = by_type.get("memory_candidate", [])
+        count = len(actual_mc)
 
-    source = graph.add_object("source", {
-        "kind": "tool_result",
-        "content": (
-            "Company: Northwind Robotics. Founded 2021. ARR: $2.4M. "
-            "Headcount: 18. Last funding: $5M seed in 2023. "
-            "Key risk: concentrated revenue from two enterprise customers. "
-            "CEO says they plan to raise Series A in Q3 2026."
-        ),
-        "channel": "api",
-        "sender_ref": "tool_gateway",
-        "frame_id": "frame_crm_lookup",
-        "url": None,
-        "metadata": {"tool_name": "crm.lookup_company", "tool_call_id": "call_xyz789"},
-    })
-    print(f"  Created source: {source.id}")
-    print(f"  Done. Graph has {sum(1 for _ in graph.objects())} objects total.")
+        if "min_count" in exp and count < exp["min_count"]:
+            failures.append(
+                f"  memory_candidates: expected >= {exp['min_count']}, got {count}"
+            )
+        if "each_has" in exp:
+            for field in exp["each_has"]:
+                missing = [mc for mc in actual_mc if not mc.data.get(field)]
+                if missing:
+                    failures.append(
+                        f"  memory_candidates: {len(missing)} object(s) missing field '{field}'"
+                    )
 
+    # --- artifacts ---
+    if "artifacts" in expected:
+        exp = expected["artifacts"]
+        actual_art = by_type.get("artifact", [])
+        if "count" in exp and len(actual_art) != exp["count"]:
+            failures.append(
+                f"  artifacts: expected {exp['count']}, got {len(actual_art)}"
+            )
 
-# ---------------------------------------------------------------- Scenario 3
+    # --- relations ---
+    if "relations" in expected:
+        for rel_spec in expected["relations"].get("includes", []):
+            rtype = rel_spec["type"]
+            if rtype not in relation_types_in_graph:
+                failures.append(
+                    f"  relations: expected '{rtype}' ({rel_spec.get('description', '')}), "
+                    f"not found. Present relation types: {sorted(relation_types_in_graph)}"
+                )
 
-def scenario_artifact_generation(graph, rt):
-    """Task + source → artifact with relations."""
-    rt.run_goal("Process: Meeting notes from 2026-06-01.")
-
-    source = graph.add_object("source", {
-        "kind": "file",
-        "content": (
-            "Meeting notes from 2026-06-01: The team agreed to adopt a "
-            "microservices architecture. Key decision: use event sourcing for "
-            "all state changes. Action item: draft the architecture decision "
-            "record by end of week."
-        ),
-        "channel": "upload",
-        "frame_id": "frame_meeting_001",
-        "url": None,
-        "sender_ref": None,
-        "metadata": {"filename": "meeting_notes_2026_06_01.txt"},
-    })
-
-    task = graph.add_object("task", {
-        "title": "Draft architecture decision record for microservices",
-        "description": "Write the ADR for the event sourcing decision.",
-        "status": "active",
-        "priority": "high",
-        "source_observation_ids": [],
-        "owner_ref": None,
-        "due_at": None,
-        "metadata": {},
-    })
-
-    artifact = graph.add_object("artifact", {
-        "kind": "report",
-        "title": "ADR-001: Microservices + Event Sourcing",
-        "content": "# ADR-001\n\n## Decision\nAdopt microservices with event sourcing.",
-        "format": "markdown",
-        "source_ids": [source.id],
-        "task_ids": [task.id],
-        "observation_ids": [],
-        "status": "draft",
-        "frame_id": "frame_meeting_001",
-        "metadata": {},
-    })
-
-    graph.add_relation("generates", task.id, artifact.id)
-    graph.add_relation("derived_from", artifact.id, source.id)
-
-    print(f"  Created source, task, artifact with relations.")
-    print(f"  Done. Graph has {sum(1 for _ in graph.objects())} objects total.")
+    return (len(failures) == 0), failures
 
 
-# ---------------------------------------------------------------- main
+# ------------------------------------------------------------------ main
 
-if __name__ == "__main__":
-    results = []
 
-    results.append(run_scenario("Chat Message → Observation → Task", scenario_chat_observation_task))
-    results.append(run_scenario("Tool Result → Source → Observations", scenario_tool_result_source))
-    results.append(run_scenario("Artifact Generation with Relations", scenario_artifact_generation))
+def main():
+    fixtures = _load_fixtures()
+    if not fixtures:
+        print("No YAML fixture files found in", _HERE)
+        sys.exit(1)
 
-    passed = sum(results)
+    results: list[tuple[str, bool, list[str]]] = []
+
+    for name, scenario in fixtures:
+        print(f"\n{'='*60}")
+        print(f"Fixture: {name}")
+        desc = scenario.get("description", "").strip().replace("\n", " ")
+        print(f"  {desc}")
+        print(f"{'='*60}")
+
+        passed, failures = _run_fixture(name, scenario)
+        results.append((name, passed, failures))
+
+        if passed:
+            print("  PASS")
+        else:
+            print(f"  FAIL — {len(failures)} assertion(s) failed:")
+            for msg in failures:
+                print(msg)
+
     total = len(results)
+    passed_count = sum(1 for _, ok, _ in results if ok)
+
     print(f"\n{'='*60}")
-    print(f"Results: {passed}/{total} scenarios passed")
+    print(f"Results: {passed_count}/{total} fixtures passed")
     print(f"{'='*60}\n")
 
-    if passed < total:
+    if passed_count < total:
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
