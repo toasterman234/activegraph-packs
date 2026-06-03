@@ -136,6 +136,4 @@ RELATION_TYPES = [
                  description="IdeaAtom contributes to a ResearchDirection."),
     RelationType(name="tests_direction", source_types=("experiment",), target_types=("research_direction",),
                  description="Experiment tests a ResearchDirection hypothesis."),
-    RelationType(name="derived_from_source", source_types=("paper",), target_types=("source",),
-                 description="Paper object derived from a source."),
 ]

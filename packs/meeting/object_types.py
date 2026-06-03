@@ -90,6 +90,4 @@ RELATION_TYPES = [
                  description="Action item extracted from a specific segment."),
     RelationType(name="action_creates_task", source_types=("meeting_action_item",), target_types=("task",),
                  description="Meeting action item promoted to a Core task."),
-    RelationType(name="derived_from_source", source_types=("meeting",), target_types=("source",),
-                 description="Meeting derived from a transcript source."),
 ]

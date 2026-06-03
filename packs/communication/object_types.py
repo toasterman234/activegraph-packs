@@ -313,10 +313,10 @@ RELATION_TYPES = [
         description="A CommParticipant participates in a CommThread.",
     ),
     RelationType(
-        name="derived_from_source",
+        name="derived_from_source_comm",
         source_types=("comm_message",),
         target_types=("source",),
-        description="A CommMessage was derived from a Core Source object.",
+        description="Alias kept for internal use. Use derived_from_source (Core) instead.",
     ),
     RelationType(
         name="dispatched_to",

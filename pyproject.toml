@@ -43,6 +43,8 @@ codebase = "packs.codebase:pack"
 team_ops = "packs.team_ops:pack"
 meeting = "packs.meeting:pack"
 
+diligence_core_bridge = "packs.bridges:pack"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["packs*", "bundles*"]

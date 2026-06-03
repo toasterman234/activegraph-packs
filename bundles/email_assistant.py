@@ -3,53 +3,96 @@
 Extends the Assistant Bundle with email processing and entity tracking.
 
 Packs included (beyond Assistant Bundle):
-  email   — email ingestion, drafting, approval-gated send (planned)
-  entity  — canonical people/organizations with dedupe (planned)
-
-Note: email and entity packs are planned for Task #3 and #4.
-This file defines the bundle structure and factory function.
+  email   — email ingestion, reply drafting, approval-gated external send
+  entity  — canonical people/organizations with deduplication
 """
 
 from __future__ import annotations
 
-from activegraph import Graph, Runtime
+from activegraph import Runtime
 
-from packs.core import pack as core_pack, CoreSettings
+from packs.email import pack as email_pack, EmailSettings
+from packs.entity import pack as entity_pack, EntitySettings
 
-# from packs.email import pack as email_pack, EmailSettings    # Task #4
-# from packs.entity import pack as entity_pack, EntitySettings  # Task #3
+from bundles.assistant import (
+    ASSISTANT_BUNDLE,
+    build_assistant,
+    CoreSettings,
+    ToolGatewaySettings,
+    SecretsSettings,
+    MemoryGatewaySettings,
+    AgentProfileSettings,
+    IdentitySettings,
+    CommunicationSettings,
+    ChatSettings,
+)
 
-from bundles.assistant import ASSISTANT_PACK_LIST, build_assistant
 
-
-EMAIL_ASSISTANT_PACK_LIST = ASSISTANT_PACK_LIST + [
-    # email_pack,   # Task #4
-    # entity_pack,  # Task #3
+EMAIL_ASSISTANT_BUNDLE = ASSISTANT_BUNDLE + [
+    entity_pack,
+    email_pack,
 ]
+
+# Alias for backward compatibility
+EMAIL_ASSISTANT_PACK_LIST = EMAIL_ASSISTANT_BUNDLE
 
 
 def build_email_assistant(
     *,
     core_settings: CoreSettings | None = None,
-    # email_settings: EmailSettings | None = None,
-    # entity_settings: EntitySettings | None = None,
+    tool_gateway_settings: ToolGatewaySettings | None = None,
+    secrets_settings: SecretsSettings | None = None,
+    memory_gateway_settings: MemoryGatewaySettings | None = None,
+    agent_profile_settings: AgentProfileSettings | None = None,
+    identity_settings: IdentitySettings | None = None,
+    communication_settings: CommunicationSettings | None = None,
+    chat_settings: ChatSettings | None = None,
+    entity_settings: EntitySettings | None = None,
+    email_settings: EmailSettings | None = None,
     llm_provider=None,
 ) -> Runtime:
     """Create a Runtime with the Email Assistant Bundle loaded.
 
-    Includes the full Assistant Bundle plus email and entity packs.
+    Includes the full Assistant Bundle plus email ingestion/drafting and
+    entity deduplication (people and organizations).
 
     Args:
         core_settings: Override CoreSettings.
+        tool_gateway_settings: Override ToolGatewaySettings.
+        secrets_settings: Override SecretsSettings.
+        memory_gateway_settings: Override MemoryGatewaySettings.
+        agent_profile_settings: Override AgentProfileSettings.
+        identity_settings: Override IdentitySettings.
+        communication_settings: Override CommunicationSettings.
+        chat_settings: Override ChatSettings.
+        entity_settings: Override EntitySettings.
+        email_settings: Override EmailSettings.
         llm_provider: LLM provider for LLM-backed behaviors.
 
     Returns:
-        A configured Runtime ready to process emails.
+        A configured Runtime ready to process emails and track entities.
     """
-    rt = build_assistant(core_settings=core_settings, llm_provider=llm_provider)
+    rt = build_assistant(
+        core_settings=core_settings,
+        tool_gateway_settings=tool_gateway_settings,
+        secrets_settings=secrets_settings,
+        memory_gateway_settings=memory_gateway_settings,
+        agent_profile_settings=agent_profile_settings,
+        identity_settings=identity_settings,
+        communication_settings=communication_settings,
+        chat_settings=chat_settings,
+        llm_provider=llm_provider,
+    )
 
-    # Additional packs will be loaded here as implemented:
-    # rt.load_pack(entity_pack, settings=entity_settings or EntitySettings())
-    # rt.load_pack(email_pack, settings=email_settings or EmailSettings())
+    rt.load_pack(entity_pack, settings=entity_settings or EntitySettings())
+    rt.load_pack(email_pack, settings=email_settings or EmailSettings())
 
     return rt
+
+
+if __name__ == "__main__":
+    print("Building email assistant bundle...")
+    rt = build_email_assistant()
+    print(f"Loaded {len(EMAIL_ASSISTANT_BUNDLE)} packs:")
+    for p in EMAIL_ASSISTANT_BUNDLE:
+        print(f"  - {p.name} v{p.version}")

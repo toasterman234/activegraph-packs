@@ -1,0 +1,1 @@
+# Diligence-Core Bridge fixtures

@@ -155,8 +155,4 @@ RELATION_TYPES = [
                  description="CodeChange belongs to a Repo."),
     RelationType(name="test_for_repo", source_types=("test_result",), target_types=("repo",),
                  description="TestResult belongs to a Repo."),
-    RelationType(name="derived_from_source", source_types=("repo", "issue", "pull_request",
-                 "architecture_decision", "code_change", "test_result"),
-                 target_types=("source",),
-                 description="Codebase object derived from a source."),
 ]

@@ -467,4 +467,25 @@ RELATION_TYPES = [
             "Used by bridge packs to connect domain objects to Core objects."
         ),
     ),
+    RelationType(
+        name="derived_from_source",
+        source_types=(
+            # Core types
+            "observation", "task", "action", "artifact", "memory_candidate", "evaluation",
+            # Communication types
+            "comm_message", "comm_thread", "comm_intent", "comm_response_candidate",
+            # Domain types — Research, Meeting, Codebase, VC, Team/Ops
+            "paper", "meeting", "transcript_segment",
+            "repo", "issue", "pull_request", "architecture_decision", "code_change", "test_result",
+            "company_profile", "founder_profile", "investment_memo", "deal_round",
+            "email_message", "email_thread", "email_draft",
+            "chat_input", "chat_session", "chat_turn",
+        ),
+        target_types=("source",),
+        description=(
+            "A domain or infrastructure object is derived from a Core source. "
+            "Universal provenance relation — declared here so all packs share "
+            "one definition and avoid PackConflictError."
+        ),
+    ),
 ]
