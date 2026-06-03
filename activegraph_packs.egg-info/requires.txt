@@ -1,6 +1,5 @@
 activegraph[llm]>=1.0.5
 pydantic>=2.0
-pyyaml>=6.0.3
 
 [dev]
 activegraph[llm]>=1.0.5
