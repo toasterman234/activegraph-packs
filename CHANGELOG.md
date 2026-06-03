@@ -1,0 +1,57 @@
+# activegraph-packs Changelog
+
+This file tracks repo-level changes. Per-pack changes are recorded in each pack's own `CHANGELOG.md`.
+
+---
+
+## v0.1.0 — Initial release (2026-06-03)
+
+### Packs (15 + bridge)
+
+| Pack | Description |
+|---|---|
+| `core` | Universal primitives: source, observation, task, action, artifact, memory_candidate, evaluation |
+| `tool_gateway` | Capability execution with policy checks, credential injection, and output sanitization |
+| `secrets` | Credential reference management — secrets never enter model context |
+| `memory_gateway` | Memory lifecycle: candidate → evaluation → storage → retrieval → ranking |
+| `agent_profile` | Agent goals, personality, standing instructions, and behavior-scoped context assembly |
+| `identity_auth` | Principal resolution, role hierarchy, AuthContext, permission checking |
+| `communication` | Channel-neutral semantic layer: CommThread, CommMessage, CommIntent, ResponseCandidate |
+| `chat` | Chat adapter: chat_input → CommMessage → ChatTurn with session continuity |
+| `email` | Email adapter: email_message → Source + CommMessage + EmailThread; draft + approval gate |
+| `entity` | Canonical entity deduplication: extraction, resolution, merge candidate/decision flow |
+| `research` | Paper ingestion, claim extraction, idea atoms, hypothesis generation |
+| `vc` | VC/investor assistant: founder tracking, deal rounds, investment memos |
+| `codebase` | Codebase analysis: PR/issue ingestion, tech radar, debt observations |
+| `team_ops` | Team and operations: standup, OKR, retro, project tracking |
+| `meeting` | Meeting transcript ingestion, decision extraction, action item creation, summary |
+| `bridges/diligence_core_bridge` | Maps Diligence pack objects to Core primitives (document→source, claim→observation, memo→artifact, risk→evaluation) |
+
+### Bundles (4)
+
+| Bundle | Packs | Use case |
+|---|---|---|
+| `assistant` | core + tool_gateway + secrets + memory_gateway + agent_profile + identity_auth + communication + chat | Base interactive assistant |
+| `email_assistant` | assistant + email + entity | Email-capable assistant with entity tracking |
+| `vc_bundle` | email_assistant + diligence + diligence_core_bridge + vc + meeting | Full VC / investor assistant |
+| `research_bundle` | core + tool_gateway + memory_gateway + communication + chat + research | Research pipeline (headless-friendly) |
+
+### Infrastructure
+
+- **Inspector UI** — React inspector for live graph state, event trace, behavior maps, and pack capabilities (TypeScript, `artifacts/activegraph-ui`)
+- **API Server** — Express 5 API server bridging the Inspector UI to the Python runtime (TypeScript, `artifacts/api-server`)
+- **Demo server** — `python packs/demo_server.py` — runs the ActiveGraph runtime on port 7788 (or `ACTIVEGRAPH_PORT`)
+- **SQLite persistence** — `persist_to` parameter on `build_assistant()` for durable event logs; `Runtime.load(path)` for resume
+- **Fixture runners** — every pack ships `fixtures/run_fixtures.py`; no LLM or API key required
+- **Cross-pack integration fixtures** — three multi-pack scenarios in `packs/fixtures/`
+- **GitHub Actions CI** — `.github/workflows/ci.yml` runs all 16 fixture runners + 3 integration suites on push and PR
+
+### OSS hygiene
+
+- `LICENSE` (MIT, 2026)
+- `CONTRIBUTING.md` (pack authoring guide, hygiene checklist, design rules)
+- `README.md` (project overview, quick start, pack table, bundle table, architecture diagram)
+- `activegraph-builder-report.md` (builder log)
+- `activegraph-direction-report.md` (architecture direction report, 29 sections)
+- `.gitignore` hardened with `.env*`, `*.key`, `*.pem`, `*.secret` patterns
+- All packs have `README.md` and `CHANGELOG.md`
