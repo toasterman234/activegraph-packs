@@ -44,8 +44,8 @@ def main():
         ),
     )
 
-    graph = rt._graph  # type: ignore[attr-defined]
-    loaded = [p.name for p in rt._loaded_packs]  # type: ignore[attr-defined]
+    graph = rt.graph
+    loaded = [p.name for p in rt.loaded_packs()]
     print(f"\nPacks loaded ({len(loaded)}): {loaded}")
 
     # ── Step 1: Ingest a founder email ──────────────────────────────────────

@@ -42,9 +42,9 @@ def main():
         chat_settings=ChatSettings(llm_provider="mock"),
     )
 
-    graph = rt._graph  # type: ignore[attr-defined]
+    graph = rt.graph
 
-    print(f"\nPacks loaded: {[p.name for p in rt._loaded_packs]}")  # type: ignore[attr-defined]
+    print(f"\nPacks loaded: {[p.name for p in rt.loaded_packs()]}")
 
     # Submit a chat message
     from packs.chat.tools import submit_chat_input_fn

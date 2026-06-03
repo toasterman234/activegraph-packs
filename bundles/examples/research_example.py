@@ -39,8 +39,8 @@ def main():
         ),
     )
 
-    graph = rt._graph  # type: ignore[attr-defined]
-    loaded = [p.name for p in rt._loaded_packs]  # type: ignore[attr-defined]
+    graph = rt.graph
+    loaded = [p.name for p in rt.loaded_packs()]
     print(f"\nPacks loaded ({len(loaded)}): {loaded}")
 
     # Ingest two related papers
@@ -106,9 +106,9 @@ def main():
         create_experiment_fn(
             graph,
             title="Evaluate transformer pretraining on low-resource NLP tasks",
-            description=(
-                "Compare BERT-style bidirectional pretraining vs GPT-style "
-                "autoregressive pretraining on 5 low-resource languages."
+            hypothesis=(
+                "BERT-style bidirectional pretraining outperforms GPT-style "
+                "autoregressive pretraining on low-resource NLP benchmarks."
             ),
             direction_id=dir_id,
         )
