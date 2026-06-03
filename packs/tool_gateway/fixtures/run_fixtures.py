@@ -1,5 +1,10 @@
 """Run Tool Gateway Pack fixture scenarios.
 
+The full behavior chain is now graph-driven:
+  capability_call.created → call_recorder + policy_enforcer
+  capability_approval.created → call_executor → creates capability_result
+  capability_result.created → result_sourcer → creates source
+
 Usage:
     python packs/tool_gateway/fixtures/run_fixtures.py
 """
@@ -34,7 +39,7 @@ def _run_fixture(name: str, scenario: dict) -> tuple[bool, list[str]]:
         "company": company_name, "founded": 2021, "arr": "$2.4M"
     })
 
-    # Create declared objects, capture first provider id for placeholder
+    # Create declared objects
     created_ids: dict[str, list[str]] = {}
     for obj_spec in scenario.get("objects", []):
         obj_type = obj_spec["type"]
@@ -53,8 +58,13 @@ def _run_fixture(name: str, scenario: dict) -> tuple[bool, list[str]]:
     # Gather state
     all_relations = list(graph.relations())
     relation_types = {r.source for r in all_relations}
+    by_type: dict[str, list] = {}
+    for o in graph.objects():
+        by_type.setdefault(o.type, []).append(o)
 
     expected = scenario.get("expected_outputs", {})
+
+    # --- Check relations ---
     if "relations" in expected:
         for rel_spec in expected["relations"].get("includes", []):
             rtype = rel_spec["type"]
@@ -64,15 +74,25 @@ def _run_fixture(name: str, scenario: dict) -> tuple[bool, list[str]]:
                     f"not found. Present: {sorted(relation_types)}"
                 )
 
-    # Also verify we created the expected object types
-    for obj_type in ["capability_provider", "capability_call"]:
-        objs = list(graph.objects(type=obj_type))
-        if not objs:
-            failures.append(f"  Expected {obj_type} objects, none found")
-        else:
-            print(f"  {obj_type}: {len(objs)} object(s)")
-            for o in objs[:2]:
-                print(f"    status={o.data.get('status', 'n/a')} name={o.data.get('name', o.data.get('capability_name', ''))}")
+    # --- Print full call lifecycle state ---
+    calls = by_type.get("capability_call", [])
+    approvals = by_type.get("capability_approval", [])
+    results = by_type.get("capability_result", [])
+    sources = by_type.get("source", [])
+
+    print(f"  capability_call: {len(calls)}")
+    for c in calls:
+        print(f"    status={c.data.get('status', 'n/a')} name={c.data.get('capability_name', '')}")
+
+    print(f"  capability_approval: {len(approvals)} (graph-driven execution trigger)")
+    print(f"  capability_result: {len(results)} (created by call_executor behavior)")
+    print(f"  source: {len(sources)} (created by result_sourcer behavior)")
+
+    # Verify the full chain ran
+    if calls and not approvals:
+        failures.append("  No capability_approval objects — policy_enforcer did not fire or approve")
+    if approvals and not results:
+        failures.append("  capability_approval exists but no capability_result — call_executor did not fire")
 
     return (len(failures) == 0), failures
 

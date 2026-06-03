@@ -31,6 +31,18 @@ result = execute_capability.fn(...)
 
 **How to apply:** Always expose the raw function separately (`execute_capability_fn`) and wrap it with `@tool` for pack registration. The `@tool` wrapper's `.fn` attribute also works but raw export is cleaner.
 
+## graph.objects() is NOT safe inside behaviors
+
+Inside a behavior, only these graph methods are safe:
+- `graph.add_object(type, data)` ✅
+- `graph.add_relation(type, source, target)` ✅
+- `graph.get_object(id)` ✅
+- `graph.patch_object(id, patch)` ✅
+
+**NEVER** call `graph.objects()` or `graph.objects(type=...)` inside a behavior — it raises `AttributeError` silently (behavior fails with `reason=exception.AttributeError`).
+
+**How to apply:** When a behavior needs to look up an existing object, pass the object's ID through the triggering event's data or metadata, then use `graph.get_object(id)` directly. For example, Secrets pack passes `credential_ref_id` in the SecretUsageEvent metadata so `credential_resolution_recorder` can use `get_object()` instead of scanning all objects.
+
 ## @behavior decorator signature
 
 ```python

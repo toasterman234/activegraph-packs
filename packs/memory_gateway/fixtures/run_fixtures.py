@@ -1,5 +1,11 @@
 """Run Memory Gateway Pack fixture scenarios.
 
+The full behavior chain is now graph-driven:
+  memory_candidate.created → candidate_evaluator → creates evaluation
+  evaluation.created (accepted) → memory_writer → creates memory_item
+  memory_retrieval_request.created → memory_retriever → creates memory_retrieval
+  memory_retrieval.created → memory_ranker → creates memory_ranking
+
 Usage:
     python packs/memory_gateway/fixtures/run_fixtures.py
 """
@@ -33,9 +39,22 @@ def _run_fixture(name: str, scenario: dict) -> tuple[bool, list[str]]:
         auto_accept_categories=["preference", "instruction", "decision"],
     ))
 
+    # Phase 1: add all non-retrieval-request objects first
+    retrieval_requests = []
     for obj_spec in scenario.get("objects", []):
+        if obj_spec["type"] == "memory_retrieval_request":
+            retrieval_requests.append(obj_spec)
+        else:
+            graph.add_object(obj_spec["type"], obj_spec["data"])
+
+    # Let candidate → evaluation → memory_item chain complete
+    rt.run_until_idle()
+
+    # Phase 2: add retrieval requests (memory items are now in the backend)
+    for obj_spec in retrieval_requests:
         graph.add_object(obj_spec["type"], obj_spec["data"])
 
+    # Let memory_retriever → memory_retrieval → memory_ranker chain complete
     rt.run_until_idle()
 
     by_type: dict[str, list] = {}
@@ -54,7 +73,6 @@ def _run_fixture(name: str, scenario: dict) -> tuple[bool, list[str]]:
         count = len(evals)
         if "min_count" in exp and count < exp["min_count"]:
             failures.append(f"  evaluations: expected >= {exp['min_count']}, got {count}")
-
         if "has_accepted" in exp:
             accepted_evals = [e for e in evals if e.data.get("judgment") == "accepted"]
             min_acc = exp["has_accepted"].get("min_count", 1)
@@ -62,7 +80,6 @@ def _run_fixture(name: str, scenario: dict) -> tuple[bool, list[str]]:
                 failures.append(
                     f"  evaluations: expected >= {min_acc} accepted, got {len(accepted_evals)}"
                 )
-
         print(f"  evaluations: {count} ({sum(1 for e in evals if e.data.get('judgment')=='accepted')} accepted, "
               f"{sum(1 for e in evals if e.data.get('judgment')=='rejected')} rejected)")
 
@@ -76,6 +93,28 @@ def _run_fixture(name: str, scenario: dict) -> tuple[bool, list[str]]:
         print(f"  memory_items: {count}")
         for item in items[:3]:
             print(f"    [{item.data.get('confidence', 0):.2f}] {item.data.get('text','')[:60]}")
+
+    # --- memory_retrievals ---
+    if "memory_retrievals" in expected:
+        exp = expected["memory_retrievals"]
+        retrievals = by_type.get("memory_retrieval", [])
+        count = len(retrievals)
+        if "min_count" in exp and count < exp["min_count"]:
+            failures.append(f"  memory_retrievals: expected >= {exp['min_count']}, got {count}")
+        print(f"  memory_retrievals: {count}")
+        for r in retrievals[:2]:
+            print(f"    results_count={r.data.get('results_count', 0)} query={r.data.get('query','')[:40]}")
+
+    # --- memory_rankings ---
+    if "memory_rankings" in expected:
+        exp = expected["memory_rankings"]
+        rankings = by_type.get("memory_ranking", [])
+        count = len(rankings)
+        if "min_count" in exp and count < exp["min_count"]:
+            failures.append(f"  memory_rankings: expected >= {exp['min_count']}, got {count}")
+        print(f"  memory_rankings: {count}")
+        for rk in rankings[:3]:
+            print(f"    rank={rk.data.get('rank')} score={rk.data.get('score')} item={rk.data.get('item_id','')[:20]}")
 
     # --- relations ---
     if "relations" in expected:

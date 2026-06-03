@@ -8,6 +8,7 @@ Key design rules:
 - credential_ref stores a NAME only — never an actual secret value
 - input_data is recorded as-is (secrets must be absent before recording)
 - CapabilityResult.output_data is sanitized and size-limited
+- CapabilityApproval is the trigger for call_executor — fully graph-visible
 """
 
 from __future__ import annotations
@@ -61,8 +62,8 @@ class CapabilityProvider(BaseModel):
 class CapabilityCall(BaseModel):
     """A proposed or executing capability call.
 
-    Represents one call to an external provider. Created when a behavior
-    proposes using an external capability. Policy checks run before execution.
+    Lifecycle:
+      proposed → policy_checking → approved → executing → done | failed | rejected
 
     IMPORTANT: input_data must NOT contain actual secrets — use
     credential_ref_name to reference credentials by name only.
@@ -106,6 +107,43 @@ class CapabilityCall(BaseModel):
     proposed_at: Optional[str] = Field(
         default=None,
         description="ISO 8601 datetime when the call was proposed.",
+    )
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class CapabilityApproval(BaseModel):
+    """Records that a capability call was approved for execution.
+
+    Created by policy_enforcer when a call is auto-approved.
+    Serves as the graph-visible trigger for call_executor.
+
+    Design: policy_enforcer creates this object → call_executor fires
+    on capability_approval.created → executes the call.
+
+    This makes the approval-to-execution chain fully graph-visible:
+    every approval has a corresponding CapabilityApproval record.
+    """
+
+    call_id: str = Field(
+        description="ID of the CapabilityCall that was approved.",
+    )
+    provider_id: str = Field(default="")
+    provider_name: str = Field(default="")
+    capability_name: str = Field(default="")
+    input_data: dict[str, Any] = Field(default_factory=dict)
+    credential_ref_name: Optional[str] = Field(default=None)
+    frame_id: Optional[str] = Field(default=None)
+    policy_decision: str = Field(
+        default="auto_approved",
+        description="How the approval decision was made.",
+    )
+    approver: str = Field(
+        default="policy_enforcer",
+        description="Name of the behavior or agent that approved the call.",
+    )
+    approved_at: Optional[str] = Field(
+        default=None,
+        description="ISO 8601 datetime of approval.",
     )
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -172,6 +210,14 @@ OBJECT_TYPES = [
         ),
     ),
     ObjectType(
+        name="capability_approval",
+        schema=CapabilityApproval,
+        description=(
+            "Records that a capability_call was approved for execution. "
+            "Serves as the graph-visible trigger for call_executor behavior."
+        ),
+    ),
+    ObjectType(
         name="capability_result",
         schema=CapabilityResult,
         description=(
@@ -190,6 +236,12 @@ RELATION_TYPES = [
         source_types=("capability_call",),
         target_types=("capability_provider",),
         description="A capability call invokes a capability provider.",
+    ),
+    RelationType(
+        name="approved_by",
+        source_types=("capability_call",),
+        target_types=("capability_approval",),
+        description="A capability call is approved by a capability_approval record.",
     ),
     RelationType(
         name="produces_result",

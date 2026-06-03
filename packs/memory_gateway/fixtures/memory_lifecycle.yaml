@@ -1,16 +1,18 @@
 # Fixture: Memory Lifecycle
 #
 # Demonstrates the full Memory Gateway behavior chain:
-#   1. A memory_candidate is created (from Core Pack)
-#   2. candidate_evaluator accepts it (confidence >= threshold)
-#   3. memory_writer creates a MemoryItem
-#   4. A memory_retrieval triggers memory_ranker
+#   1. High-confidence memory_candidates are created
+#   2. candidate_evaluator accepts or rejects them
+#   3. memory_writer promotes accepted candidates to MemoryItems
+#   4. A memory_retrieval_request triggers memory_retriever (graph-driven)
+#   5. memory_ranker scores the retrieved items
 
 name: memory_lifecycle
 description: >
-  A high-confidence preference memory_candidate is evaluated and accepted.
-  It is promoted to a MemoryItem stored in the backend.
-  A retrieval query scores the item by keyword overlap.
+  High-confidence preference and instruction memory_candidates are evaluated
+  and accepted. A low-confidence candidate is rejected. Then a
+  memory_retrieval_request is created — memory_retriever queries the backend,
+  creates a MemoryRetrieval, and memory_ranker scores all items.
 
 objects:
   - type: memory_candidate
@@ -49,6 +51,15 @@ objects:
       evaluation_id: null
       frame_id: frame_001
 
+  - type: memory_retrieval_request
+    data:
+      query: user interface preferences dark mode
+      top_k: 10
+      min_score: 0.1
+      category: null
+      behavior_name: test_fixture
+      frame_id: frame_001
+
 expected_outputs:
   evaluations:
     min_count: 3
@@ -56,9 +67,17 @@ expected_outputs:
       min_count: 2
   memory_items:
     min_count: 2
+  memory_retrievals:
+    min_count: 1
+  memory_rankings:
+    min_count: 1
   relations:
     includes:
       - type: evaluates
         description: evaluation evaluates memory_candidate
       - type: accepted_as
         description: accepted memory_candidate promoted to memory_item
+      - type: fulfilled_by
+        description: memory_retrieval_request fulfilled by memory_retrieval
+      - type: scored_by
+        description: memory_ranking scores a retrieval result

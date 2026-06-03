@@ -1,13 +1,16 @@
 """Cross-pack integration fixture: Tool Gateway → Core → Memory Gateway.
 
-Demonstrates the full pipeline:
-  1. Tool Gateway executes a mock API call → CapabilityResult
-  2. result_sourcer maps result → Core source
-  3. Core observation_extractor extracts observations
-  4. Core memory_candidate_proposer creates memory candidates
-  5. Memory Gateway candidate_evaluator evaluates candidates
-  6. Memory Gateway memory_writer promotes accepted → MemoryItem
-  7. retrieve_memories returns relevant items
+Demonstrates the full pipeline with graph-driven execution:
+  1. A CapabilityProvider is registered
+  2. A CapabilityCall is proposed (low risk → policy_enforcer auto-approves)
+  3. call_executor behavior fires (capability_approval.created) → executes → CapabilityResult
+  4. result_sourcer creates a Core source object
+  5. Core observation_extractor extracts observations from the source
+  6. Core memory_candidate_proposer creates memory candidates
+  7. Memory Gateway candidate_evaluator evaluates candidates
+  8. Memory Gateway memory_writer promotes accepted → MemoryItem
+  9. A memory_retrieval_request triggers memory_retriever → MemoryRetrieval
+  10. memory_ranker scores all retrieved items → MemoryRanking
 
 Run without LLM or API key:
     python packs/fixtures/cross_pack_integration.py
@@ -15,7 +18,6 @@ Run without LLM or API key:
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -24,17 +26,18 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 from activegraph import Graph, Runtime
 from packs.core import pack as core_pack, CoreSettings
 from packs.tool_gateway import pack as tg_pack, ToolGatewaySettings
-from packs.tool_gateway.tools import execute_capability_fn, register_local_capability
+from packs.tool_gateway.tools import register_local_capability
 from packs.secrets import pack as secrets_pack, SecretsSettings
+from packs.secrets.tools import resolve_and_audit_fn
 from packs.memory_gateway import pack as mg_pack, MemoryGatewaySettings
 from packs.memory_gateway.backend import clear_all_backends
-from packs.memory_gateway.tools import retrieve_memories_fn
 
 
 def run_integration_test() -> bool:
     """Run the cross-pack integration scenario. Returns True if passed."""
     print("\n" + "=" * 60)
     print("Cross-Pack Integration: Tool Gateway → Core → Memory Gateway")
+    print("(fully graph-driven: all steps triggered by behaviors)")
     print("=" * 60)
 
     # Fresh backend
@@ -51,6 +54,7 @@ def run_integration_test() -> bool:
     rt.load_pack(tg_pack, settings=ToolGatewaySettings(
         auto_approve_risk_classes=["low", "medium"],
         create_source_from_result=True,
+        record_output_data=True,
     ))
     rt.load_pack(secrets_pack, settings=SecretsSettings())
     rt.load_pack(mg_pack, settings=MemoryGatewaySettings(
@@ -73,27 +77,59 @@ def run_integration_test() -> bool:
     register_local_capability("crm", "lookup_company", mock_crm_lookup)
 
     # --- Step 1: Register capability provider ---
-    print("\n[1] Registering capability provider...")
+    print("\n[1] Registering capability provider and credential reference...")
     provider = graph.add_object("capability_provider", {
         "name": "crm",
         "kind": "api",
         "base_url": "https://crm.example.com",
         "description": "Mock CRM for integration test",
         "capabilities": ["lookup_company"],
-        "credential_ref_name": None,
+        "credential_ref_name": "CRM_API_KEY",
         "enabled": True,
         "metadata": {},
     })
-    print(f"    Provider: {provider.id}")
 
-    # --- Step 2: Propose a capability call ---
-    print("\n[2] Proposing capability call (low risk → auto-approved)...")
+    # Register credential reference (Secrets Pack creates usage event)
+    cred_ref = graph.add_object("credential_ref", {
+        "name": "CRM_API_KEY",
+        "scope": "read",
+        "provider_hint": "crm",
+        "last_used_at": None,
+        "use_count": 0,
+        "enabled": True,
+        "metadata": {},
+    })
+    rt.run_until_idle()
+
+    # Resolve and audit credential (creates usage event with event_type='resolved')
+    # Pass credential_ref_id so the behavior can patch last_used_at/use_count directly.
+    # NOTE: returned value would be used as API header, not stored
+    resolve_and_audit_fn(
+        graph=graph,
+        credential_name="CRM_API_KEY",
+        behavior_name="integration_test",
+        frame_id="frame_integration_001",
+        credential_ref_id=cred_ref.id,
+    )
+    rt.run_until_idle()
+
+    print(f"    Provider: {provider.id}")
+    print(f"    CredentialRef: {cred_ref.id}")
+
+    # Check credential stats updated
+    cred_obj = graph.get_object(cred_ref.id)
+    if cred_obj:
+        print(f"    CredentialRef use_count: {cred_obj.data.get('use_count', 0)}")
+        print(f"    CredentialRef last_used_at: {cred_obj.data.get('last_used_at', 'not set')}")
+
+    # --- Step 2: Propose a capability call (graph-driven execution) ---
+    print("\n[2] Proposing capability call (low risk → auto-approved → call_executor fires)...")
     call = graph.add_object("capability_call", {
         "provider_id": provider.id,
         "provider_name": "crm",
         "capability_name": "lookup_company",
         "input_data": {"company_name": "Northwind Robotics"},
-        "credential_ref_name": None,
+        "credential_ref_name": "CRM_API_KEY",
         "risk_class": "low",
         "status": "proposed",
         "proposed_by": "integration_test",
@@ -101,43 +137,26 @@ def run_integration_test() -> bool:
         "proposed_at": "2026-06-03T10:00:00Z",
         "metadata": {},
     })
+
+    # Let all behaviors run:
+    # policy_enforcer → capability_approval.created → call_executor → capability_result.created
+    # → result_sourcer → source.created → observation_extractor → memory_candidate_proposer
+    # → candidate_evaluator → memory_writer
     rt.run_until_idle()
 
-    # Verify call was approved
+    # --- Step 3: Inspect call lifecycle ---
+    print("\n[3] Inspecting call lifecycle...")
     call_obj = graph.get_object(call.id)
     call_status = call_obj.data.get("status", "unknown") if call_obj else "unknown"
-    print(f"    Call {call.id} status: {call_status}")
+    print(f"    Call status: {call_status} (should be 'done')")
 
-    # --- Step 3: Execute the call ---
-    print("\n[3] Executing capability call...")
-    result_data = execute_capability_fn(
-        provider_name="crm",
-        capability_name="lookup_company",
-        input_data={"company_name": "Northwind Robotics"},
-        call_id=call.id,
-        frame_id="frame_integration_001",
-    )
-    print(f"    Success: {result_data['success']}")
+    approvals = list(graph.objects(type="capability_approval"))
+    results = list(graph.objects(type="capability_result"))
+    print(f"    capability_approvals: {len(approvals)} (created by policy_enforcer)")
+    print(f"    capability_results: {len(results)} (created by call_executor behavior)")
 
-    # --- Step 4: Record the result (triggers result_sourcer → source → observations) ---
-    print("\n[4] Recording capability result...")
-    result = graph.add_object("capability_result", {
-        "call_id": call.id,
-        "provider_name": "crm",
-        "capability_name": "lookup_company",
-        "output_data": result_data["output_data"],
-        "error": result_data["error"],
-        "success": result_data["success"],
-        "executed_at": result_data["executed_at"],
-        "sanitized": False,
-        "source_id": None,
-        "frame_id": "frame_integration_001",
-        "metadata": {},
-    })
-    rt.run_until_idle()  # result_sourcer fires → source created → observations extracted → candidates proposed → memory evaluated
-
-    # --- Step 5: Inspect results ---
-    print("\n[5] Inspecting graph state...")
+    # --- Step 4: Inspect Core pipeline ---
+    print("\n[4] Inspecting Core pipeline (source → observations → candidates)...")
     sources = list(graph.objects(type="source"))
     observations = list(graph.objects(type="observation"))
     candidates = list(graph.objects(type="memory_candidate"))
@@ -155,27 +174,62 @@ def run_integration_test() -> bool:
     accepted_evals = [e for e in evaluations if e.data.get("judgment") == "accepted"]
     print(f"    memory_items (accepted): {len(memory_items)} ({len(accepted_evals)} accepted)")
 
-    # --- Step 6: Retrieve memories ---
-    print("\n[6] Retrieving memories for 'API architecture preferences'...")
-    results = retrieve_memories_fn(
-        query="API architecture preferences",
-        top_k=5,
-        min_score=0.1,
-        behavior_name="integration_test",
-        frame_id="frame_integration_001",
-    )
-    print(f"    Retrieved {len(results)} item(s):")
-    for r in results[:3]:
-        print(f"      [{r['score']:.2f}] {r['text'][:60]}")
+    # --- Step 5: Graph-driven retrieval ---
+    print("\n[5] Graph-driven retrieval via memory_retrieval_request...")
+    request = graph.add_object("memory_retrieval_request", {
+        "query": "API architecture preferences JSON",
+        "top_k": 5,
+        "min_score": 0.1,
+        "category": None,
+        "behavior_name": "integration_test",
+        "frame_id": "frame_integration_001",
+        "backend_url": ":memory:",
+        "metadata": {},
+    })
+    rt.run_until_idle()  # memory_retriever fires → memory_retrieval created → memory_ranker fires
+
+    retrievals = list(graph.objects(type="memory_retrieval"))
+    rankings = list(graph.objects(type="memory_ranking"))
+
+    print(f"    memory_retrievals: {len(retrievals)} (created by memory_retriever behavior)")
+    print(f"    memory_rankings: {len(rankings)} (created by memory_ranker behavior)")
+    if retrievals:
+        ret = retrievals[0]
+        item_ids = ret.data.get("item_ids", [])
+        print(f"    retrieval item_ids count: {len(item_ids)}")
+        for rk in sorted(rankings, key=lambda r: r.data.get("rank", 99))[:3]:
+            print(f"      rank={rk.data.get('rank')} score={rk.data.get('score')} "
+                  f"item={rk.data.get('item_id','')[:20]}")
 
     # --- Assertions ---
     failures = []
+
+    if not approvals:
+        failures.append("No capability_approval — policy_enforcer did not create approval")
+    if not results:
+        failures.append("No capability_result — call_executor behavior did not fire")
+    if call_status != "done":
+        failures.append(f"Expected call status='done', got '{call_status}'")
     if not sources:
-        failures.append("No sources created from capability result")
+        failures.append("No sources — result_sourcer did not fire")
     if not observations:
-        failures.append("No observations extracted from source")
+        failures.append("No observations — Core observation_extractor did not fire")
     if not evaluations:
-        failures.append("No evaluations created by candidate_evaluator")
+        failures.append("No evaluations — memory Gateway candidate_evaluator did not fire")
+    if not retrievals:
+        failures.append("No memory_retrieval — memory_retriever behavior did not fire")
+
+    all_relations = list(graph.relations())
+    relation_types = {r.source for r in all_relations}
+    for expected_rel in ["calls", "approved_by", "produces_result", "sourced_as",
+                          "evaluates", "fulfilled_by"]:
+        if expected_rel not in relation_types:
+            failures.append(f"Missing relation type '{expected_rel}'")
+
+    # Credential resolution audit
+    cred_obj = graph.get_object(cred_ref.id)
+    if cred_obj and cred_obj.data.get("use_count", 0) < 1:
+        failures.append("CredentialRef use_count was not updated by credential_resolution_recorder")
 
     print("\n" + "=" * 60)
     if failures:
@@ -184,7 +238,10 @@ def run_integration_test() -> bool:
             print(f"  {f}")
         return False
     else:
-        print("PASS — full pipeline verified: Tool Gateway → Core → Memory Gateway")
+        print("PASS — full pipeline verified:")
+        print("  Tool Gateway (policy → approval → execution) → Core → Memory Gateway")
+        print("  Secrets audit trail updated")
+        print("  Graph-driven retrieval: request → retrieval → rankings")
     print("=" * 60 + "\n")
     return True
 

@@ -1,22 +1,28 @@
 """Tool Gateway Pack behaviors — v0.1.
 
-Three behaviors covering the capability call lifecycle:
+Four behaviors covering the full capability call lifecycle:
 
-1. call_recorder — on capability_call.created (proposed), creates a
-   calls relation to the provider and logs the call.
+1. call_recorder — on capability_call.created, creates a calls relation
+   to the provider and logs the call.
 
 2. policy_enforcer — on capability_call.created (proposed), checks
-   risk_class against auto_approve settings and updates status to
-   'approved' or 'rejected'.
+   risk_class against auto_approve settings. For auto-approved calls,
+   creates a CapabilityApproval object (the graph-visible trigger for
+   call_executor). Non-auto-approved calls get status='policy_checking'.
 
-3. result_sourcer — on capability_result.created, maps the result
+3. call_executor — on capability_approval.created, executes the approved
+   call, creates a CapabilityResult, creates produces_result relation.
+
+4. result_sourcer — on capability_result.created, maps the result
    to a Core source object so downstream behaviors can observe output.
 
 Design rules:
 - @behavior signature: (name, on, where, view, creates, budget, priority)
 - 'description' goes in the docstring, not @behavior
 - Behaviors must not store actual secrets — credential_ref_name only
-- Policy decisions must be graph-visible (status field on CapabilityCall)
+- Policy decisions must be graph-visible (CapabilityApproval objects)
+- call_executor is triggered by capability_approval, not by capability_call
+  directly — this avoids any race condition with policy_enforcer
 """
 
 from __future__ import annotations
@@ -26,7 +32,7 @@ from datetime import datetime, timezone
 
 from activegraph.packs import behavior
 
-from .object_types import CapabilityCall, CapabilityResult
+from .object_types import CapabilityApproval, CapabilityResult
 from .settings import ToolGatewaySettings
 
 
@@ -47,8 +53,8 @@ def call_recorder(event, graph, ctx, *, settings: ToolGatewaySettings):
     Side effects: logs call for audit trail
 
     Runs immediately when a capability_call is added to the graph.
-    Does not execute the call — that is handled by the calling code
-    after policy_enforcer approves the call.
+    Does not execute the call — that is handled by call_executor after
+    policy_enforcer creates a CapabilityApproval.
     """
     obj = event.payload.get("object", {})
     call_id = obj.get("id")
@@ -62,26 +68,26 @@ def call_recorder(event, graph, ctx, *, settings: ToolGatewaySettings):
     try:
         graph.add_relation("calls", call_id, provider_id)
     except Exception:
-        pass  # Provider may not exist yet in simple setups
+        pass
 
 
 @behavior(
     name="policy_enforcer",
     on=["object.created"],
     where={"object.type": "capability_call"},
-    creates=[],
+    creates=["capability_approval"],
 )
 def policy_enforcer(event, graph, ctx, *, settings: ToolGatewaySettings):
     """Check a proposed capability call against the policy configuration.
 
     On: object.created (capability_call, status=proposed)
-    Creates: updates capability_call.status to 'approved' or 'rejected'
+    Creates: capability_approval (if auto-approved) — serves as the trigger
+             for call_executor behavior
+    Side effects: patches capability_call.status to 'approved' or 'policy_checking'
 
     Auto-approves calls whose risk_class is in settings.auto_approve_risk_classes.
-    All other risk classes set status to 'policy_checking' (requires manual approval).
-
-    This is graph-visible: status changes are recorded as patches,
-    so the full policy decision history is auditable.
+    For auto-approved calls, creates a CapabilityApproval which triggers
+    call_executor. All other risk classes set status='policy_checking'.
     """
     obj = event.payload.get("object", {})
     call_id = obj.get("id")
@@ -91,18 +97,126 @@ def policy_enforcer(event, graph, ctx, *, settings: ToolGatewaySettings):
     current_status = call_data.get("status", "proposed")
 
     if current_status != "proposed":
-        return  # Only process newly proposed calls
+        return
+
+    now = datetime.now(timezone.utc).isoformat()
 
     if risk_class in settings.auto_approve_risk_classes:
-        new_status = "approved"
-    else:
-        new_status = "policy_checking"
+        # Patch the call status
+        try:
+            graph.patch_object(call_id, {"status": "approved"})
+        except Exception:
+            pass
 
-    # Patch the capability_call status to reflect the policy decision
+        # Create CapabilityApproval — this is the trigger for call_executor
+        approval = graph.add_object(
+            "capability_approval",
+            CapabilityApproval(
+                call_id=call_id,
+                provider_id=call_data.get("provider_id", ""),
+                provider_name=call_data.get("provider_name", ""),
+                capability_name=call_data.get("capability_name", ""),
+                input_data=call_data.get("input_data", {}),
+                credential_ref_name=call_data.get("credential_ref_name"),
+                frame_id=call_data.get("frame_id"),
+                policy_decision="auto_approved",
+                approver="policy_enforcer",
+                approved_at=now,
+                metadata={"risk_class": risk_class},
+            ).model_dump(),
+        )
+
+        # Create approved_by relation: capability_call → capability_approval
+        try:
+            graph.add_relation("approved_by", call_id, approval.id)
+        except Exception:
+            pass
+    else:
+        try:
+            graph.patch_object(call_id, {"status": "policy_checking"})
+        except Exception:
+            pass
+
+
+@behavior(
+    name="call_executor",
+    on=["object.created"],
+    where={"object.type": "capability_approval"},
+    creates=["capability_result"],
+)
+def call_executor(event, graph, ctx, *, settings: ToolGatewaySettings):
+    """Execute an approved capability call and create a CapabilityResult.
+
+    On: object.created (capability_approval)
+    Creates: capability_result
+    Creates: produces_result(capability_call → capability_result) relation
+    Side effects: patches capability_call.status to 'done' or 'failed'
+
+    This behavior is the only place where actual capability execution happens.
+    It fires ONLY when a CapabilityApproval exists — ensuring that every
+    executed call was explicitly approved by policy_enforcer.
+
+    Dispatches to the local registry via execute_capability_fn.
+    """
+    from .tools import execute_capability_fn
+
+    obj = event.payload.get("object", {})
+    approval_data = obj.get("data", {})
+
+    call_id = approval_data.get("call_id", "")
+    provider_name = approval_data.get("provider_name", "")
+    capability_name = approval_data.get("capability_name", "")
+    input_data = approval_data.get("input_data", {})
+    frame_id = approval_data.get("frame_id")
+
+    if not call_id or not capability_name:
+        return
+
+    # Patch call status to 'executing'
+    try:
+        graph.patch_object(call_id, {"status": "executing"})
+    except Exception:
+        pass
+
+    # Execute the capability
+    result_data = execute_capability_fn(
+        provider_name=provider_name,
+        capability_name=capability_name,
+        input_data=input_data,
+        call_id=call_id,
+        frame_id=frame_id,
+    )
+
+    output_data = result_data.get("output_data", "")[: settings.max_output_chars]
+
+    # Create CapabilityResult
+    result = graph.add_object(
+        "capability_result",
+        CapabilityResult(
+            call_id=call_id,
+            provider_name=provider_name,
+            capability_name=capability_name,
+            output_data=output_data if settings.record_output_data else "",
+            error=result_data.get("error"),
+            success=result_data.get("success", True),
+            executed_at=result_data.get("executed_at"),
+            sanitized=False,
+            frame_id=frame_id,
+        ).model_dump(),
+    )
+
+    # Patch call status to 'done' or 'failed'
+    new_status = "done" if result_data.get("success") else "failed"
     try:
         graph.patch_object(call_id, {"status": new_status})
     except Exception:
-        pass  # Patch may fail if the runtime doesn't support it
+        pass
+
+    # Create produces_result relation: capability_call → capability_result
+    try:
+        graph.add_relation("produces_result", call_id, result.id)
+    except Exception:
+        pass
 
 
 @behavior(
@@ -138,7 +252,6 @@ def result_sourcer(event, graph, ctx, *, settings: ToolGatewaySettings):
     frame_id = result_data.get("frame_id")
     call_id = result_data.get("call_id", "")
 
-    # Truncate output to configured limit
     content = output_data[: settings.max_output_chars]
 
     # Create Core source object from the result
@@ -172,4 +285,4 @@ def result_sourcer(event, graph, ctx, *, settings: ToolGatewaySettings):
         pass
 
 
-BEHAVIORS = [call_recorder, policy_enforcer, result_sourcer]
+BEHAVIORS = [call_recorder, policy_enforcer, call_executor, result_sourcer]

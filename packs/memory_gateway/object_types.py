@@ -2,10 +2,12 @@
 
 Manages the full memory lifecycle:
   memory_candidate (from Core) → evaluation → MemoryItem (stored)
-  retrieval request → MemoryRetrieval → MemoryRanking
+  memory_retrieval_request → memory_retriever → MemoryRetrieval → memory_ranker → MemoryRanking
 
 Design rule: Core Pack only produces memory_candidates. This pack
 decides what to keep, stores accepted items, and handles retrieval.
+memory_retrieval_request is the graph-visible trigger for retrieval —
+it makes all retrieval requests observable and auditable.
 """
 
 from __future__ import annotations
@@ -74,15 +76,60 @@ class MemoryItem(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class MemoryRetrievalRequest(BaseModel):
+    """A graph-visible trigger for memory retrieval.
+
+    Create this object to request a retrieval. memory_retriever behavior
+    fires on this, queries the backend, and creates a MemoryRetrieval.
+
+    This makes every retrieval request observable and auditable.
+    Useful for debugging, replays, and tracing what context was consulted.
+    """
+
+    query: str = Field(
+        description="The retrieval query (natural language or keyword).",
+    )
+    top_k: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Maximum number of items to return.",
+    )
+    min_score: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=1.0,
+        description="Minimum similarity score to include in results.",
+    )
+    category: Optional[str] = Field(
+        default=None,
+        description="Optional filter by memory category.",
+    )
+    behavior_name: Optional[str] = Field(
+        default=None,
+        description="Requesting behavior name.",
+    )
+    frame_id: Optional[str] = Field(default=None)
+    backend_url: str = Field(
+        default=":memory:",
+        description="Backend URL to query.",
+    )
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class MemoryRetrieval(BaseModel):
     """Records a memory retrieval request and its results.
 
-    Created when a behavior requests memories relevant to a query.
+    Created by memory_retriever after executing a MemoryRetrievalRequest.
     Links to the MemoryRanking objects that score each result.
     """
 
     query: str = Field(
         description="The retrieval query (natural language or keyword).",
+    )
+    request_id: Optional[str] = Field(
+        default=None,
+        description="ID of the MemoryRetrievalRequest that triggered this retrieval.",
     )
     behavior_name: Optional[str] = Field(
         default=None,
@@ -151,6 +198,14 @@ OBJECT_TYPES = [
         ),
     ),
     ObjectType(
+        name="memory_retrieval_request",
+        schema=MemoryRetrievalRequest,
+        description=(
+            "A graph-visible trigger for memory retrieval. Create this object to "
+            "request memories; memory_retriever behavior fires and returns results."
+        ),
+    ),
+    ObjectType(
         name="memory_retrieval",
         schema=MemoryRetrieval,
         description=(
@@ -177,6 +232,12 @@ RELATION_TYPES = [
         source_types=("memory_candidate",),
         target_types=("memory_item",),
         description="An accepted memory_candidate is promoted to a MemoryItem.",
+    ),
+    RelationType(
+        name="fulfilled_by",
+        source_types=("memory_retrieval_request",),
+        target_types=("memory_retrieval",),
+        description="A retrieval request is fulfilled by a retrieval result.",
     ),
     RelationType(
         name="ranked_in",

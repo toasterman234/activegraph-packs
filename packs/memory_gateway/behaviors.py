@@ -1,23 +1,27 @@
 """Memory Gateway Pack behaviors — v0.1.
 
-Three behaviors covering the full memory lifecycle:
+Four behaviors covering the full memory lifecycle:
 
-1. candidate_evaluator — on memory_candidate.created (from Core Pack),
-   scores the candidate and accepts/rejects it. Creates an evaluation
-   object with the judgment and updates the candidate.
+1. candidate_evaluator — on memory_candidate.created, scores the candidate
+   and accepts/rejects it. Creates an evaluation with judgment.
 
 2. memory_writer — on evaluation.created (judgment=accepted,
-   subject_type=memory_candidate), promotes the candidate to a
-   MemoryItem and stores it in the backend.
+   subject_type=memory_candidate), promotes candidate to MemoryItem.
 
-3. memory_ranker — on memory_retrieval.created, scores each retrieved
+3. memory_retriever — on memory_retrieval_request.created, queries the
+   backend, creates MemoryRetrieval with item_ids, creates fulfilled_by
+   relation. This makes all retrieval requests graph-visible and auditable.
+
+4. memory_ranker — on memory_retrieval.created, scores each retrieved
    MemoryItem against the query and creates MemoryRanking objects.
 
 Design rules:
 - @behavior signature: no 'description' param — put it in docstring
 - candidate_evaluator uses the MemoryGatewaySettings.acceptance_threshold
-- memory_writer calls the backend's store_item method
-- memory_ranker uses keyword overlap (same heuristic as Core task_linker)
+- memory_retriever is the graph-driven path: create memory_retrieval_request,
+  let the behavior fire, read results from memory_retrieval.item_ids
+- memory_ranker fires on memory_retrieval.created (whether from retriever
+  or created directly)
 """
 
 from __future__ import annotations
@@ -28,7 +32,7 @@ from datetime import datetime, timezone
 from activegraph.packs import behavior
 
 from .backend import get_backend
-from .object_types import MemoryItem, MemoryRanking
+from .object_types import MemoryItem, MemoryRanking, MemoryRetrieval
 from .settings import MemoryGatewaySettings
 
 
@@ -218,6 +222,91 @@ def memory_writer(event, graph, ctx, *, settings: MemoryGatewaySettings):
 
 
 @behavior(
+    name="memory_retriever",
+    on=["object.created"],
+    where={"object.type": "memory_retrieval_request"},
+    creates=["memory_retrieval"],
+)
+def memory_retriever(event, graph, ctx, *, settings: MemoryGatewaySettings):
+    """Fulfill a memory_retrieval_request by querying the backend.
+
+    On: object.created (memory_retrieval_request)
+    Creates: memory_retrieval (with item_ids populated)
+    Creates: fulfilled_by(memory_retrieval_request → memory_retrieval) relation
+
+    This behavior is the graph-driven retrieval path. Creating a
+    memory_retrieval_request object triggers this behavior, which queries
+    the backend and creates a MemoryRetrieval with item_ids. Then
+    memory_ranker fires on memory_retrieval.created and scores the results.
+
+    To use: add a memory_retrieval_request to the graph and call
+    rt.run_until_idle() — the results will be in the memory_retrieval
+    and memory_ranking objects.
+    """
+    obj = event.payload.get("object", {})
+    request_id = obj.get("id")
+    request_data = obj.get("data", {})
+
+    query = request_data.get("query", "")
+    top_k = request_data.get("top_k", settings.retrieval_top_k)
+    min_score = request_data.get("min_score", settings.min_retrieval_score)
+    category = request_data.get("category")
+    behavior_name = request_data.get("behavior_name")
+    frame_id = request_data.get("frame_id")
+    backend_url = request_data.get("backend_url", settings.backend_url)
+
+    if not query or not request_id:
+        return
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Query the backend
+    backend = get_backend(backend_url)
+    results = backend.retrieve_by_query(
+        query=query,
+        top_k=top_k,
+        min_score=min_score,
+        category=category,
+    )
+
+    item_ids = [r["item_id"] for r in results]
+
+    # Update retrieval stats in backend
+    for item_id in item_ids:
+        try:
+            backend.update_retrieval(item_id)
+        except Exception:
+            pass
+
+    # Create MemoryRetrieval object
+    retrieval = graph.add_object(
+        "memory_retrieval",
+        MemoryRetrieval(
+            query=query,
+            request_id=request_id,
+            behavior_name=behavior_name,
+            frame_id=frame_id,
+            results_count=len(item_ids),
+            item_ids=item_ids,
+            retrieved_at=now,
+        ).model_dump(),
+    )
+
+    # Create fulfilled_by relation: request → retrieval
+    try:
+        graph.add_relation("fulfilled_by", request_id, retrieval.id)
+    except Exception:
+        pass
+
+    # Create ranked_in relations: memory_item → memory_retrieval
+    for item_id in item_ids:
+        try:
+            graph.add_relation("ranked_in", item_id, retrieval.id)
+        except Exception:
+            pass
+
+
+@behavior(
     name="memory_ranker",
     on=["object.created"],
     where={"object.type": "memory_retrieval"},
@@ -261,8 +350,9 @@ def memory_ranker(event, graph, ctx, *, settings: MemoryGatewaySettings):
     scored.sort(key=lambda x: x[0], reverse=True)
 
     for rank, (score, item_id, item_text) in enumerate(scored, start=1):
-        if score < settings.min_retrieval_score:
-            continue
+        # Do NOT re-apply min_retrieval_score here — the retriever already
+        # filtered by min_score before populating retrieval.item_ids.
+        # Ranking all returned items ensures the graph audit trail is complete.
 
         ranking = graph.add_object(
             "memory_ranking",
@@ -281,4 +371,4 @@ def memory_ranker(event, graph, ctx, *, settings: MemoryGatewaySettings):
             pass
 
 
-BEHAVIORS = [candidate_evaluator, memory_writer, memory_ranker]
+BEHAVIORS = [candidate_evaluator, memory_writer, memory_retriever, memory_ranker]

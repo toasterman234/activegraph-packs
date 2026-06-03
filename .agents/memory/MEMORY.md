@@ -1,3 +1,3 @@
 - [ActiveGraph Relation API field names](activegraph-relation-api.md) — r.source=relation_type, r.target=source_obj_id, r.type=target_obj_id (counterintuitive)
 - [ActiveGraph behavior trigger pattern](activegraph-behavior-triggers.md) — behaviors fire on graph.add_object(); call rt.run_until_idle() to drain cascading chains
-- [ActiveGraph Pack API Quirks](activegraph-pack-api-quirks.md) — Pack() has no requires/integrates_with; @tool is not callable (use raw fn); @behavior has no description param
+- [ActiveGraph Pack API Quirks](activegraph-pack-api-quirks.md) — Pack() no requires kwarg; @tool not callable; @behavior no description; graph.objects() UNSAFE in behaviors (use get_object)
