@@ -1,0 +1,55 @@
+# Fixture: Chat Message → Observation → Task
+#
+# Demonstrates the basic Core Pack flow:
+#   1. A chat message becomes a source
+#   2. observation_extractor extracts observations
+#   3. task_linker links observations to open tasks
+#   4. memory_candidate_proposer proposes memory for durable facts
+#
+# Run without LLM or API key:
+#   python packs/core/fixtures/run_fixtures.py
+
+name: chat_observation_task
+description: >
+  A user sends a chat message expressing a preference and requesting work.
+  Core Pack extracts observations and links them to an existing task.
+
+objects:
+  - type: task
+    data:
+      title: Build a user authentication system
+      description: Implement login, logout, and session management.
+      status: active
+      priority: high
+      metadata: {}
+
+  - type: source
+    data:
+      kind: chat_message
+      content: >
+        I really prefer using JWT tokens for authentication rather than sessions.
+        We should implement the login system this week. Can you make sure it
+        handles expired tokens gracefully? That is a critical requirement.
+      channel: chat
+      sender_ref: user_owner
+      frame_id: frame_001
+      metadata:
+        session_id: sess_abc123
+
+expected_outputs:
+  observations:
+    min_count: 2
+    max_count: 10
+    at_least_one_with:
+      category: preference
+  memory_candidates:
+    min_count: 1
+    each_has:
+      - category
+      - text
+  relations:
+    includes:
+      - type: grounds
+        description: source grounds at least one observation
+      - type: proposes
+        description: at least one observation proposes a memory candidate

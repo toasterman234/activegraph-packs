@@ -1,0 +1,75 @@
+# Fixture: Observation + Task → Artifact
+#
+# Demonstrates how artifacts relate back to sources and tasks.
+# In practice, an LLM behavior (in a domain pack) would create
+# the artifact. Here we create it directly to test Core Pack
+# relation tracking.
+
+name: artifact_generation
+description: >
+  A research observation leads to a task to write a report.
+  A behavior generates a report artifact and links it back
+  to the task and originating source.
+
+objects:
+  - type: source
+    data:
+      kind: file
+      content: >
+        Meeting notes from 2026-06-01: The team agreed to adopt
+        a microservices architecture. Key decision: use event
+        sourcing for all state changes. Action item: draft the
+        architecture decision record by end of week.
+      channel: upload
+      frame_id: frame_meeting_001
+      metadata:
+        filename: meeting_notes_2026_06_01.txt
+
+  - type: task
+    data:
+      title: Draft architecture decision record for microservices
+      description: Write the ADR covering the team's decision to adopt microservices with event sourcing.
+      status: active
+      priority: high
+
+  - type: artifact
+    data:
+      kind: report
+      title: Architecture Decision Record — Microservices + Event Sourcing
+      content: |
+        # ADR-001: Microservices Architecture with Event Sourcing
+
+        ## Status
+        Accepted (2026-06-01)
+
+        ## Context
+        The team met on 2026-06-01 and agreed to adopt a microservices
+        architecture for the platform.
+
+        ## Decision
+        Use event sourcing for all state changes. Each service owns its
+        event log and projects its own state from it.
+
+        ## Consequences
+        - Positive: full auditability, replayability, temporal queries
+        - Negative: increased operational complexity
+      format: markdown
+      status: draft
+
+relations:
+  - type: derived_from
+    source: artifact[0]
+    target: source[0]
+    description: artifact derived from meeting notes source
+  - type: generates
+    source: task[0]
+    target: artifact[0]
+    description: task generated the artifact
+
+expected_outputs:
+  artifacts:
+    count: 1
+  relations:
+    includes:
+      - type: derived_from
+      - type: generates

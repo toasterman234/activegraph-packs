@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "activegraph-packs"
+version = "0.1.0"
+description = "Open-source collection of ActiveGraph packs for auditable, event-sourced assistants"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+dependencies = [
+    "activegraph[llm]>=1.0.5",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "activegraph[llm]>=1.0.5",
+    "pydantic>=2.0",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pyyaml>=6.0",
+]
+
+# Pack entry points — register each pack so `load_by_name("<name>")` works
+[project.entry-points."activegraph.packs"]
+core = "packs.core:pack"
+
+# As new packs are added, register them here:
+# tool_gateway = "packs.tool_gateway:pack"
+# secrets = "packs.secrets:pack"
+# memory_gateway = "packs.memory_gateway:pack"
+# agent_profile = "packs.agent_profile:pack"
+# identity_auth = "packs.identity_auth:pack"
+# entity = "packs.entity:pack"
+# communication = "packs.communication:pack"
+# chat = "packs.chat:pack"
+# email = "packs.email:pack"
+# research = "packs.research:pack"
+# vc = "packs.vc:pack"
+# codebase = "packs.codebase:pack"
+# team_ops = "packs.team_ops:pack"
+# meeting = "packs.meeting:pack"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["packs*", "bundles*"]
+
+[tool.setuptools.package-data]
+"*" = [
+    "prompts/*.md",
+    "fixtures/*.yaml",
+    "fixtures/*.json",
+    "README.md",
+    "CHANGELOG.md",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

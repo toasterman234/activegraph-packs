@@ -1,0 +1,35 @@
+# Fixture: Tool Result → Source → Observation
+#
+# Demonstrates Core Pack handling a tool result as a source.
+# Tool Gateway Pack would normally create this source; here we
+# create it directly to test Core Pack in isolation.
+
+name: tool_result_source
+description: >
+  A tool call returns company information. The result is stored
+  as a source, and Core Pack extracts observations from it.
+
+objects:
+  - type: source
+    data:
+      kind: tool_result
+      content: >
+        Company: Northwind Robotics. Founded 2021. ARR: $2.4M.
+        Headcount: 18. Last funding: $5M seed in 2023.
+        Key risk: concentrated revenue from two enterprise customers.
+        CEO says they plan to raise Series A in Q3 2026.
+      channel: api
+      sender_ref: tool_gateway
+      frame_id: frame_crm_lookup
+      metadata:
+        tool_name: crm.lookup_company
+        tool_call_id: call_xyz789
+
+expected_outputs:
+  observations:
+    min_count: 2
+    max_count: 10
+  relations:
+    includes:
+      - type: grounds
+        description: source grounds extracted observations
