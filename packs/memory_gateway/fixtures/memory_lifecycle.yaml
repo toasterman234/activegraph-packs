@@ -1,0 +1,64 @@
+# Fixture: Memory Lifecycle
+#
+# Demonstrates the full Memory Gateway behavior chain:
+#   1. A memory_candidate is created (from Core Pack)
+#   2. candidate_evaluator accepts it (confidence >= threshold)
+#   3. memory_writer creates a MemoryItem
+#   4. A memory_retrieval triggers memory_ranker
+
+name: memory_lifecycle
+description: >
+  A high-confidence preference memory_candidate is evaluated and accepted.
+  It is promoted to a MemoryItem stored in the backend.
+  A retrieval query scores the item by keyword overlap.
+
+objects:
+  - type: memory_candidate
+    data:
+      text: The user always prefers dark mode for all interfaces.
+      confidence: 0.85
+      source_ids: []
+      observation_ids: []
+      category: preference
+      subject_ref: null
+      accepted: false
+      evaluation_id: null
+      frame_id: frame_001
+
+  - type: memory_candidate
+    data:
+      text: API responses should always be in JSON format.
+      confidence: 0.9
+      source_ids: []
+      observation_ids: []
+      category: instruction
+      subject_ref: null
+      accepted: false
+      evaluation_id: null
+      frame_id: frame_001
+
+  - type: memory_candidate
+    data:
+      text: Some vague thing.
+      confidence: 0.3
+      source_ids: []
+      observation_ids: []
+      category: fact
+      subject_ref: null
+      accepted: false
+      evaluation_id: null
+      frame_id: frame_001
+
+expected_outputs:
+  evaluations:
+    min_count: 3
+    has_accepted:
+      min_count: 2
+  memory_items:
+    min_count: 2
+  relations:
+    includes:
+      - type: evaluates
+        description: evaluation evaluates memory_candidate
+      - type: accepted_as
+        description: accepted memory_candidate promoted to memory_item

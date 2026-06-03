@@ -1,0 +1,46 @@
+# Fixture: Tool Call Flow
+#
+# Demonstrates the full Tool Gateway behavior chain:
+#   1. A capability_provider is registered
+#   2. A capability_call is proposed (low risk → auto-approved)
+#   3. A capability_result is created
+#   4. result_sourcer creates a Core source object
+
+name: tool_call_flow
+description: >
+  A mock CRM lookup is registered as a local capability.
+  A low-risk call is proposed, auto-approved by policy_enforcer,
+  and a result is recorded. The result becomes a Core source object.
+
+objects:
+  - type: capability_provider
+    data:
+      name: CRM API
+      kind: api
+      base_url: https://crm.example.com
+      description: Customer relationship management lookup
+      capabilities: [lookup_company, lookup_contact]
+      credential_ref_name: CRM_API_KEY
+      enabled: true
+      metadata: {}
+
+  - type: capability_call
+    data:
+      provider_id: PLACEHOLDER_PROVIDER_ID
+      provider_name: CRM API
+      capability_name: lookup_company
+      input_data:
+        company_name: Northwind Robotics
+      credential_ref_name: CRM_API_KEY
+      risk_class: low
+      status: proposed
+      proposed_by: test_fixture
+      frame_id: frame_crm_001
+      proposed_at: "2026-06-03T10:00:00Z"
+      metadata: {}
+
+expected_outputs:
+  relations:
+    includes:
+      - type: calls
+        description: capability_call links to capability_provider

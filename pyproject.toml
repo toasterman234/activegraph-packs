@@ -27,11 +27,13 @@ dev = [
 # Pack entry points — register each pack so `load_by_name("<name>")` works
 [project.entry-points."activegraph.packs"]
 core = "packs.core:pack"
+tool_gateway = "packs.tool_gateway:pack"
+secrets = "packs.secrets:pack"
+memory_gateway = "packs.memory_gateway:pack"
 
 # As new packs are added, register them here:
-# tool_gateway = "packs.tool_gateway:pack"
-# secrets = "packs.secrets:pack"
-# memory_gateway = "packs.memory_gateway:pack"
+# agent_profile = "packs.agent_profile:pack"
+# identity_auth = "packs.identity_auth:pack"
 # agent_profile = "packs.agent_profile:pack"
 # identity_auth = "packs.identity_auth:pack"
 # entity = "packs.entity:pack"

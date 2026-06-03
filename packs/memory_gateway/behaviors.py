@@ -1,0 +1,284 @@
+"""Memory Gateway Pack behaviors — v0.1.
+
+Three behaviors covering the full memory lifecycle:
+
+1. candidate_evaluator — on memory_candidate.created (from Core Pack),
+   scores the candidate and accepts/rejects it. Creates an evaluation
+   object with the judgment and updates the candidate.
+
+2. memory_writer — on evaluation.created (judgment=accepted,
+   subject_type=memory_candidate), promotes the candidate to a
+   MemoryItem and stores it in the backend.
+
+3. memory_ranker — on memory_retrieval.created, scores each retrieved
+   MemoryItem against the query and creates MemoryRanking objects.
+
+Design rules:
+- @behavior signature: no 'description' param — put it in docstring
+- candidate_evaluator uses the MemoryGatewaySettings.acceptance_threshold
+- memory_writer calls the backend's store_item method
+- memory_ranker uses keyword overlap (same heuristic as Core task_linker)
+"""
+
+from __future__ import annotations
+
+import re
+from datetime import datetime, timezone
+
+from activegraph.packs import behavior
+
+from .backend import get_backend
+from .object_types import MemoryItem, MemoryRanking
+from .settings import MemoryGatewaySettings
+
+
+# ------------------------------------------------------------------ helpers
+
+
+def _word_set(text: str) -> set[str]:
+    """Lowercase word set, stripping punctuation and stopwords."""
+    STOPWORDS = {
+        "a", "an", "the", "and", "or", "but", "in", "on", "at", "to",
+        "for", "of", "with", "is", "are", "was", "were", "be", "been",
+        "have", "has", "do", "does", "this", "that", "it", "i", "we",
+        "you", "they", "my", "our", "your", "not", "by", "as",
+    }
+    words = re.findall(r"[a-z]+", text.lower())
+    return {w for w in words if w not in STOPWORDS and len(w) > 2}
+
+
+def _jaccard(a: str, b: str) -> float:
+    """Jaccard similarity between word sets of two strings."""
+    wa, wb = _word_set(a), _word_set(b)
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / len(wa | wb)
+
+
+# ------------------------------------------------------------------ behaviors
+
+
+@behavior(
+    name="candidate_evaluator",
+    on=["object.created"],
+    where={"object.type": "memory_candidate"},
+    creates=["evaluation"],
+)
+def candidate_evaluator(event, graph, ctx, *, settings: MemoryGatewaySettings):
+    """Evaluate a memory_candidate and accept or reject it.
+
+    On: object.created (memory_candidate)
+    Creates: evaluation (judgment=accepted or rejected)
+    Side effects: patches memory_candidate.accepted=True if accepted
+
+    Acceptance criteria:
+    - confidence >= acceptance_threshold
+    - OR category in auto_accept_categories AND confidence >= threshold
+
+    The evaluation object records the judgment and rationale.
+    memory_writer then picks up accepted candidates.
+    """
+    obj = event.payload.get("object", {})
+    candidate_id = obj.get("id")
+    candidate_data = obj.get("data", {})
+
+    confidence = candidate_data.get("confidence", 0.0)
+    category = candidate_data.get("category")
+    text = candidate_data.get("text", "")
+    frame_id = candidate_data.get("frame_id")
+
+    if not text or not candidate_id:
+        return
+
+    threshold = settings.acceptance_threshold
+    is_priority_category = category in settings.auto_accept_categories
+
+    if confidence >= threshold:
+        judgment = "accepted"
+        rationale = (
+            f"Confidence {confidence:.2f} >= threshold {threshold:.2f}."
+            + (f" Category '{category}' is in auto_accept_categories." if is_priority_category else "")
+        )
+        accepted = True
+    else:
+        judgment = "rejected"
+        rationale = (
+            f"Confidence {confidence:.2f} < threshold {threshold:.2f}. "
+            "Candidate does not meet the minimum quality bar."
+        )
+        accepted = False
+
+    # Create evaluation object
+    eval_obj = graph.add_object(
+        "evaluation",
+        {
+            "subject_id": candidate_id,
+            "subject_type": "memory_candidate",
+            "judgment": judgment,
+            "rationale": rationale,
+            "evaluator": "memory_gateway.candidate_evaluator",
+            "score": confidence,
+            "frame_id": frame_id,
+            "metadata": {
+                "category": category,
+                "threshold": threshold,
+            },
+        },
+    )
+
+    # Create evaluates relation: evaluation → memory_candidate
+    try:
+        graph.add_relation("evaluates", eval_obj.id, candidate_id)
+    except Exception:
+        pass
+
+    # Patch memory_candidate.accepted and evaluation_id
+    if accepted:
+        try:
+            graph.patch_object(candidate_id, {
+                "accepted": True,
+                "evaluation_id": eval_obj.id,
+            })
+        except Exception:
+            pass
+
+
+@behavior(
+    name="memory_writer",
+    on=["object.created"],
+    where={"object.type": "evaluation"},
+    creates=["memory_item"],
+)
+def memory_writer(event, graph, ctx, *, settings: MemoryGatewaySettings):
+    """Promote an accepted memory_candidate to a MemoryItem.
+
+    On: object.created (evaluation, judgment=accepted, subject_type=memory_candidate)
+    Creates: memory_item (stored in backend)
+    Creates: accepted_as(memory_candidate → memory_item) relation
+
+    Only fires for evaluations that accepted a memory_candidate.
+    Writes the MemoryItem to the configured backend.
+    """
+    obj = event.payload.get("object", {})
+    eval_data = obj.get("data", {})
+
+    judgment = eval_data.get("judgment", "")
+    subject_type = eval_data.get("subject_type", "")
+    subject_id = eval_data.get("subject_id", "")
+
+    if judgment != "accepted" or subject_type != "memory_candidate":
+        return
+
+    # Fetch the candidate from the graph
+    try:
+        candidate = graph.get_object(subject_id)
+    except Exception:
+        return
+
+    if not candidate:
+        return
+
+    candidate_data = candidate.data
+    now = datetime.now(timezone.utc).isoformat()
+
+    item = graph.add_object(
+        "memory_item",
+        MemoryItem(
+            text=candidate_data.get("text", ""),
+            category=candidate_data.get("category"),
+            confidence=candidate_data.get("confidence", 0.7),
+            source_ids=candidate_data.get("source_ids", []),
+            candidate_id=subject_id,
+            created_at=now,
+            last_retrieved_at=None,
+            retrieval_count=0,
+            subject_ref=candidate_data.get("subject_ref"),
+        ).model_dump(),
+    )
+
+    # Store in backend
+    backend = get_backend(settings.backend_url)
+    backend.store_item(
+        item_id=item.id,
+        text=candidate_data.get("text", ""),
+        category=candidate_data.get("category"),
+        confidence=candidate_data.get("confidence", 0.7),
+        metadata={"candidate_id": subject_id, "created_at": now},
+    )
+
+    # Enforce max_items limit
+    if settings.max_items > 0:
+        backend.enforce_limit(settings.max_items)
+
+    # Create accepted_as relation: memory_candidate → memory_item
+    try:
+        graph.add_relation("accepted_as", subject_id, item.id)
+    except Exception:
+        pass
+
+
+@behavior(
+    name="memory_ranker",
+    on=["object.created"],
+    where={"object.type": "memory_retrieval"},
+    creates=["memory_ranking"],
+)
+def memory_ranker(event, graph, ctx, *, settings: MemoryGatewaySettings):
+    """Score each MemoryItem returned in a retrieval by query relevance.
+
+    On: object.created (memory_retrieval)
+    Creates: memory_ranking for each item in retrieval.item_ids
+    Creates: scored_by(memory_ranking → memory_retrieval) relation
+
+    Uses Jaccard word-overlap scoring (same heuristic as Core task_linker).
+    Domain packs can add LLM-backed rerankers in their own behaviors.
+    """
+    obj = event.payload.get("object", {})
+    retrieval_id = obj.get("id")
+    retrieval_data = obj.get("data", {})
+
+    query = retrieval_data.get("query", "")
+    item_ids = retrieval_data.get("item_ids", [])
+
+    if not query or not item_ids or not retrieval_id:
+        return
+
+    scored: list[tuple[float, str, str]] = []
+
+    for item_id in item_ids:
+        try:
+            item = graph.get_object(item_id)
+        except Exception:
+            continue
+        if not item:
+            continue
+
+        item_text = item.data.get("text", "")
+        score = _jaccard(query, item_text)
+        scored.append((score, item_id, item_text))
+
+    # Sort by score descending
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    for rank, (score, item_id, item_text) in enumerate(scored, start=1):
+        if score < settings.min_retrieval_score:
+            continue
+
+        ranking = graph.add_object(
+            "memory_ranking",
+            MemoryRanking(
+                retrieval_id=retrieval_id,
+                item_id=item_id,
+                score=round(score, 4),
+                reason=f"Keyword overlap score {score:.2f} with query.",
+                rank=rank,
+            ).model_dump(),
+        )
+
+        try:
+            graph.add_relation("scored_by", ranking.id, retrieval_id)
+        except Exception:
+            pass
+
+
+BEHAVIORS = [candidate_evaluator, memory_writer, memory_ranker]

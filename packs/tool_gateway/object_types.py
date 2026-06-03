@@ -1,0 +1,209 @@
+"""Tool Gateway Pack object and relation types — v0.1.
+
+All external capability calls (APIs, MCP, local tools, SDK clients)
+must flow through this pack. It normalizes calls, records actions,
+runs policy checks, and maps results back to Core source objects.
+
+Key design rules:
+- credential_ref stores a NAME only — never an actual secret value
+- input_data is recorded as-is (secrets must be absent before recording)
+- CapabilityResult.output_data is sanitized and size-limited
+"""
+
+from __future__ import annotations
+
+from typing import Any, Literal, Optional
+
+from pydantic import BaseModel, Field
+
+from activegraph.packs import ObjectType, RelationType
+
+
+# ================================================================ Schemas
+
+
+class CapabilityProvider(BaseModel):
+    """A registered external capability provider.
+
+    Examples: OpenAI API, a local Python function, an MCP server,
+    a REST API, an SDK client.
+
+    Providers are registered once and referenced by ID in CapabilityCall.
+    """
+
+    name: str = Field(description="Human-readable name (e.g. 'OpenAI', 'CRM API').")
+    kind: Literal["local", "api", "mcp", "sdk", "webhook"] = Field(
+        description="Category of provider."
+    )
+    base_url: Optional[str] = Field(
+        default=None,
+        description="Base URL for API/MCP providers.",
+    )
+    description: str = Field(
+        default="",
+        description="What this provider enables.",
+    )
+    capabilities: list[str] = Field(
+        default_factory=list,
+        description="List of capability names this provider exposes.",
+    )
+    credential_ref_name: Optional[str] = Field(
+        default=None,
+        description=(
+            "Name of the CredentialRef to use for this provider. "
+            "Secrets Pack resolves this to an actual secret at call time."
+        ),
+    )
+    enabled: bool = Field(default=True)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class CapabilityCall(BaseModel):
+    """A proposed or executing capability call.
+
+    Represents one call to an external provider. Created when a behavior
+    proposes using an external capability. Policy checks run before execution.
+
+    IMPORTANT: input_data must NOT contain actual secrets — use
+    credential_ref_name to reference credentials by name only.
+    """
+
+    provider_id: str = Field(
+        description="ID of the CapabilityProvider object.",
+    )
+    provider_name: str = Field(
+        default="",
+        description="Denormalized provider name for easy display.",
+    )
+    capability_name: str = Field(
+        description="Name of the specific capability/method to call.",
+    )
+    input_data: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Input parameters. Must not contain secrets.",
+    )
+    credential_ref_name: Optional[str] = Field(
+        default=None,
+        description="Name of credential reference (resolved by Secrets Pack at runtime).",
+    )
+    risk_class: Literal["low", "medium", "high", "critical"] = Field(
+        default="medium",
+        description=(
+            "Risk classification for policy gating. "
+            "low=read-only/safe, medium=writes to external systems, "
+            "high=financial/legal consequences, critical=irreversible."
+        ),
+    )
+    status: Literal["proposed", "policy_checking", "approved", "rejected", "executing", "done", "failed"] = Field(
+        default="proposed",
+        description="Call lifecycle status.",
+    )
+    proposed_by: Optional[str] = Field(
+        default=None,
+        description="Name of the behavior that proposed this call.",
+    )
+    frame_id: Optional[str] = Field(default=None)
+    proposed_at: Optional[str] = Field(
+        default=None,
+        description="ISO 8601 datetime when the call was proposed.",
+    )
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class CapabilityResult(BaseModel):
+    """The result of an executed capability call.
+
+    Created by call_executor after a CapabilityCall completes.
+    Mapped to a Core source object by result_sourcer so downstream
+    behaviors can extract observations from tool outputs.
+    """
+
+    call_id: str = Field(description="ID of the CapabilityCall that produced this result.")
+    provider_name: str = Field(default="")
+    capability_name: str = Field(default="")
+    output_data: str = Field(
+        default="",
+        description=(
+            "Serialized output (JSON string or plain text). Size-limited by "
+            "ToolGatewaySettings.max_output_chars."
+        ),
+    )
+    error: Optional[str] = Field(
+        default=None,
+        description="Error message if the call failed.",
+    )
+    success: bool = Field(
+        default=True,
+        description="True if the call completed without error.",
+    )
+    executed_at: Optional[str] = Field(
+        default=None,
+        description="ISO 8601 datetime of execution.",
+    )
+    sanitized: bool = Field(
+        default=False,
+        description="True if output was processed to remove sensitive data.",
+    )
+    source_id: Optional[str] = Field(
+        default=None,
+        description="ID of the Core source object created from this result.",
+    )
+    frame_id: Optional[str] = Field(default=None)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+# ================================================================ ObjectType list
+
+OBJECT_TYPES = [
+    ObjectType(
+        name="capability_provider",
+        schema=CapabilityProvider,
+        description=(
+            "A registered external capability provider (API, local function, MCP, SDK). "
+            "Registered once, referenced by ID in CapabilityCall objects."
+        ),
+    ),
+    ObjectType(
+        name="capability_call",
+        schema=CapabilityCall,
+        description=(
+            "A proposed or executing capability call. All external calls must flow "
+            "through here for policy checks, credential injection, and recording."
+        ),
+    ),
+    ObjectType(
+        name="capability_result",
+        schema=CapabilityResult,
+        description=(
+            "The result of an executed capability call. Mapped to a Core source "
+            "object so downstream behaviors can observe the output."
+        ),
+    ),
+]
+
+
+# ================================================================ RelationType list
+
+RELATION_TYPES = [
+    RelationType(
+        name="calls",
+        source_types=("capability_call",),
+        target_types=("capability_provider",),
+        description="A capability call invokes a capability provider.",
+    ),
+    RelationType(
+        name="produces_result",
+        source_types=("capability_call",),
+        target_types=("capability_result",),
+        description="An executed capability call produces a result.",
+    ),
+    RelationType(
+        name="sourced_as",
+        source_types=("capability_result",),
+        target_types=("source",),
+        description=(
+            "A capability result is sourced as a Core source object, "
+            "enabling downstream observation extraction."
+        ),
+    ),
+]

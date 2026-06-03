@@ -1,0 +1,96 @@
+"""Memory Gateway Pack tools — v0.1.
+
+retrieve_memories: queries the memory backend by a natural language or
+keyword query and returns ranked MemoryItems.
+
+Behaviors that need contextual memory should call retrieve_memories_fn
+(the raw function), not the @tool-decorated object.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Optional
+
+from activegraph.packs import tool
+
+
+# ------------------------------------------------------------------ raw function (callable directly)
+
+
+def retrieve_memories_fn(
+    query: str,
+    top_k: int = 10,
+    min_score: float = 0.2,
+    category: Optional[str] = None,
+    behavior_name: Optional[str] = None,
+    frame_id: Optional[str] = None,
+    backend_url: str = ":memory:",
+) -> list[dict[str, Any]]:
+    """Query the memory backend and return ranked results.
+
+    Args:
+        query: Natural language or keyword query
+        top_k: Maximum results to return
+        min_score: Minimum similarity score (0.0–1.0)
+        category: Optional filter by memory category
+        behavior_name: Caller behavior name (for audit)
+        frame_id: Optional frame scope
+        backend_url: Backend database URL (default: in-memory SQLite)
+
+    Returns:
+        List of dicts sorted by score descending:
+        [{item_id, text, score, category, confidence}]
+    """
+    from .backend import get_backend
+
+    backend = get_backend(backend_url)
+    results = backend.retrieve_by_query(
+        query=query,
+        top_k=top_k,
+        min_score=min_score,
+        category=category,
+    )
+
+    # Update retrieval stats for returned items
+    for r in results:
+        try:
+            backend.update_retrieval(r["item_id"])
+        except Exception:
+            pass
+
+    return results
+
+
+# ------------------------------------------------------------------ tool wrapper (for pack registration)
+
+
+@tool(
+    name="retrieve_memories",
+    description=(
+        "Retrieve relevant MemoryItems for a query. "
+        "Returns a list of dicts: [{item_id, text, score, category, confidence}]. "
+        "Use this instead of querying the graph directly for memory context."
+    ),
+)
+def retrieve_memories(
+    query: str,
+    top_k: int = 10,
+    min_score: float = 0.2,
+    category: Optional[str] = None,
+    behavior_name: Optional[str] = None,
+    frame_id: Optional[str] = None,
+    backend_url: str = ":memory:",
+) -> list[dict[str, Any]]:
+    """Registered tool wrapper — delegates to retrieve_memories_fn."""
+    return retrieve_memories_fn(
+        query=query,
+        top_k=top_k,
+        min_score=min_score,
+        category=category,
+        behavior_name=behavior_name,
+        frame_id=frame_id,
+        backend_url=backend_url,
+    )
+
+
+TOOLS = [retrieve_memories]
