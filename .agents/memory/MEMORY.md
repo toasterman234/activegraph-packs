@@ -4,3 +4,4 @@
 - [Action metadata field](action-metadata-field.md) — Core Pack's Action schema needed metadata field; permission_checker silently failed without it; use `or {}` not `.get("field", {})` to guard against None
 - [Principal dedup registry pattern](principal-dedup-registry.md) — principal_resolver must check local registry by normalized sender_ref before creating; patch last_seen_at on revisit; comm_message path shares same registry
 - [Domain pack authoring patterns](domain-pack-authoring.md) — module-level registries for dedup; clear_*_registry() between fixtures; tools need _fn + @tool wrapper; behaviors fire on object.created only; all LLM behaviors are mock stubs in v0.1
+- [restart_workflow tool vs restartWorkflow callback](restart-workflow-tool.md) — use restartWorkflow() callback for artifact-managed workflows; the restart_workflow tool times out even when the server is healthy

@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: activegraph
+    description: ActiveGraph runtime inspection
 paths:
   /healthz:
     get:
@@ -24,6 +26,141 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /activegraph/trace:
+    get:
+      operationId: getTrace
+      tags: [activegraph]
+      summary: Get event trace
+      description: Returns paginated event log, optionally filtered
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 200 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: pack
+          in: query
+          schema: { type: string }
+          description: Filter by pack name
+        - name: frame_id
+          in: query
+          schema: { type: string }
+          description: Filter by frame id
+        - name: event_type
+          in: query
+          schema: { type: string }
+          description: Filter by event type
+      responses:
+        "200":
+          description: Event trace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TraceResponse"
+
+  /activegraph/graph:
+    get:
+      operationId: getGraph
+      tags: [activegraph]
+      summary: Get graph state
+      description: Returns all objects and relations in the current graph
+      parameters:
+        - name: pack
+          in: query
+          schema: { type: string }
+          description: Filter objects by pack name
+      responses:
+        "200":
+          description: Graph state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphResponse"
+
+  /activegraph/packs:
+    get:
+      operationId: getPacks
+      tags: [activegraph]
+      summary: Get loaded packs
+      description: Returns metadata for all loaded packs including object types, relation types, and behaviors
+      responses:
+        "200":
+          description: Pack list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PacksResponse"
+
+  /activegraph/frames:
+    get:
+      operationId: getFrames
+      tags: [activegraph]
+      summary: Get frames
+      description: Returns active and recently completed execution frames
+      responses:
+        "200":
+          description: Frame list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FramesResponse"
+
+  /activegraph/summary:
+    get:
+      operationId: getSummary
+      tags: [activegraph]
+      summary: Get graph summary
+      description: Returns aggregate counts and stats for quick overview
+      responses:
+        "200":
+          description: Summary stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SummaryResponse"
+
+  /activegraph/chat:
+    post:
+      operationId: sendChat
+      tags: [activegraph]
+      summary: Send chat message
+      description: Sends a message to the ActiveGraph chat runtime and returns the response
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatMessageInput"
+      responses:
+        "200":
+          description: Chat response with frame id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatResponse"
+        "503":
+          description: Runtime not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /activegraph/reset:
+    post:
+      operationId: resetRuntime
+      tags: [activegraph]
+      summary: Reset runtime
+      description: Resets the demo runtime to its initial seeded state
+      responses:
+        "200":
+          description: Reset successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResetResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +171,204 @@ components:
       required:
         - status
 
+    # ── ActiveGraph Core Types ────────────────────────────────────────────────
+
+    GraphObject:
+      type: object
+      required: [id, type, pack]
+      properties:
+        id:      { type: string }
+        type:    { type: string }
+        pack:    { type: string }
+        data:    { type: object }
+        created_at: { type: ["string", "null"] }
+
+    GraphRelation:
+      type: object
+      required: [id, type, source_id, target_id]
+      properties:
+        id:        { type: string }
+        type:      { type: string }
+        source_id: { type: string }
+        target_id: { type: string }
+        data:      { type: object }
+
+    TraceEvent:
+      type: object
+      required: [id, event_type, timestamp]
+      properties:
+        id:            { type: string }
+        event_type:    { type: string }
+        timestamp:     { type: string }
+        pack:          { type: ["string", "null"] }
+        behavior_name: { type: ["string", "null"] }
+        frame_id:      { type: ["string", "null"] }
+        object_type:   { type: ["string", "null"] }
+        object_id:     { type: ["string", "null"] }
+        payload:       { type: object }
+
+    BehaviorInfo:
+      type: object
+      required: [name]
+      properties:
+        name:         { type: string }
+        trigger:      { type: ["string", "null"] }
+        description:  { type: ["string", "null"] }
+        creates:
+          type: array
+          items: { type: string }
+        capabilities:
+          type: array
+          items: { type: string }
+
+    ObjectTypeInfo:
+      type: object
+      required: [name]
+      properties:
+        name:        { type: string }
+        description: { type: ["string", "null"] }
+
+    RelationTypeInfo:
+      type: object
+      required: [name]
+      properties:
+        name:         { type: string }
+        source_types:
+          type: array
+          items: { type: string }
+        target_types:
+          type: array
+          items: { type: string }
+        description:  { type: ["string", "null"] }
+
+    PackInfo:
+      type: object
+      required: [name, version]
+      properties:
+        name:         { type: string }
+        version:      { type: string }
+        description:  { type: ["string", "null"] }
+        object_types:
+          type: array
+          items: { $ref: "#/components/schemas/ObjectTypeInfo" }
+        relation_types:
+          type: array
+          items: { $ref: "#/components/schemas/RelationTypeInfo" }
+        behaviors:
+          type: array
+          items: { $ref: "#/components/schemas/BehaviorInfo" }
+
+    Frame:
+      type: object
+      required: [id, status]
+      properties:
+        id:         { type: string }
+        status:     { type: string }
+        frame_type: { type: ["string", "null"] }
+        started_at: { type: ["string", "null"] }
+        ended_at:   { type: ["string", "null"] }
+        event_count: { type: integer }
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/TraceEvent" }
+
+    TypeCount:
+      type: object
+      required: [type, pack, count]
+      properties:
+        type:  { type: string }
+        pack:  { type: string }
+        count: { type: integer }
+
+    # ── Response Envelopes ────────────────────────────────────────────────────
+
+    TraceResponse:
+      type: object
+      required: [events, total]
+      properties:
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/TraceEvent" }
+        total:   { type: integer }
+        offset:  { type: integer }
+        limit:   { type: integer }
+
+    GraphResponse:
+      type: object
+      required: [objects, relations]
+      properties:
+        objects:
+          type: array
+          items: { $ref: "#/components/schemas/GraphObject" }
+        relations:
+          type: array
+          items: { $ref: "#/components/schemas/GraphRelation" }
+        object_count: { type: integer }
+        relation_count: { type: integer }
+
+    PacksResponse:
+      type: object
+      required: [packs]
+      properties:
+        packs:
+          type: array
+          items: { $ref: "#/components/schemas/PackInfo" }
+        total: { type: integer }
+
+    FramesResponse:
+      type: object
+      required: [frames]
+      properties:
+        frames:
+          type: array
+          items: { $ref: "#/components/schemas/Frame" }
+        total: { type: integer }
+
+    SummaryResponse:
+      type: object
+      required: [object_count, relation_count, event_count, pack_count, frame_count]
+      properties:
+        object_count:    { type: integer }
+        relation_count:  { type: integer }
+        event_count:     { type: integer }
+        pack_count:      { type: integer }
+        frame_count:     { type: integer }
+        by_type:
+          type: array
+          items: { $ref: "#/components/schemas/TypeCount" }
+        runtime_ready:   { type: boolean }
+
+    # ── Chat ─────────────────────────────────────────────────────────────────
+
+    ChatMessageInput:
+      type: object
+      required: [content]
+      properties:
+        content:    { type: string }
+        session_id: { type: ["string", "null"] }
+        user_ref:   { type: ["string", "null"] }
+
+    ChatResponse:
+      type: object
+      required: [content, frame_id]
+      properties:
+        content:       { type: string }
+        frame_id:      { type: string }
+        user_message:  { type: string }
+        event_count:   { type: integer }
+        new_objects:
+          type: array
+          items: { type: string }
+
+    ResetResponse:
+      type: object
+      required: [success, message]
+      properties:
+        success: { type: boolean }
+        message: { type: string }
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
