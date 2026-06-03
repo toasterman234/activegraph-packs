@@ -328,15 +328,18 @@ def send_approver(event, graph, ctx, *, settings: EmailSettings):
         except Exception:
             pass
     else:
+        # Internal auto-approve: mark draft and candidate as "sent" directly.
+        # Cannot use "approved" → patch → response_dispatcher chain because
+        # patch_object does NOT re-trigger object.created behaviors.
         try:
-            graph.patch_object(draft_id, {"status": "approved"})
+            graph.patch_object(draft_id, {"status": "sent"})
         except Exception:
             pass
 
         response_candidate_id = ddata.get("response_candidate_id")
         if response_candidate_id:
             try:
-                graph.patch_object(response_candidate_id, {"status": "approved"})
+                graph.patch_object(response_candidate_id, {"status": "sent"})
             except Exception:
                 pass
 

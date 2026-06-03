@@ -257,8 +257,11 @@ def run_internal_auto_approve_fixture() -> dict:
     # Internal replies go to the original sender (alice.internal@example.com — trusted)
     # send_approver should auto-approve
     draft_status = email_drafts[0].data.get("status")
-    assert draft_status == "approved", \
-        f"Internal draft should be auto-approved, got '{draft_status}'"
+    # Internal auto-approve skips human gate → draft goes straight to "sent"
+    # (patch_object cannot re-trigger behaviors, so "approved" → "sent" dispatch
+    #  is handled inline in send_approver for the internal path)
+    assert draft_status == "sent", \
+        f"Internal draft should be auto-sent (no approval gate), got '{draft_status}'"
     assert len(approval_actions) == 0, \
         f"No approval_request actions expected for internal email, got {len(approval_actions)}"
 

@@ -6,12 +6,20 @@ Behaviors:
   chat_responder      — comm_response_candidate.created (channel=chat, approved) → ChatTurn updated
 
 Session registry:
-  _SESSION_REGISTRY maps user_ref → {"session_id", "thread_id", "turn_count"}
+  _SESSION_REGISTRY maps user_ref → {"session_id", "thread_id_hint", "turn_count"}
   _MESSAGE_TO_TURN maps comm_message_id → chat_turn_id
   _MESSAGE_TO_SESSION maps comm_message_id → session_id
+  _SESSION_TURN_HISTORY maps session_id → [{"turn_number", "user", "assistant"}]
   Call clear_session_registry() between test fixtures.
 
-LLM: llm_provider='mock' returns deterministic stubs (no API key required).
+Thread continuity:
+  CommMessage.metadata.thread_id_hint is set to session_id so each session gets its
+  own distinct comm_thread (keyed "chat::<session_id>" by thread_tracker).
+
+LLM context assembly:
+  chat_llm_responder assembles: system_prompt + prior turn history (up to max_context_messages)
+  + memory placeholder (if include_memory) + profile placeholder (if include_profile).
+  llm_provider='mock' returns deterministic stubs (no API key required).
 """
 
 from __future__ import annotations
@@ -28,6 +36,7 @@ from .settings import ChatSettings
 _SESSION_REGISTRY: dict[str, dict] = {}
 _MESSAGE_TO_TURN: dict[str, str] = {}
 _MESSAGE_TO_SESSION: dict[str, str] = {}
+_SESSION_TURN_HISTORY: dict[str, list] = {}
 
 
 def clear_session_registry() -> None:
@@ -35,6 +44,7 @@ def clear_session_registry() -> None:
     _SESSION_REGISTRY.clear()
     _MESSAGE_TO_TURN.clear()
     _MESSAGE_TO_SESSION.clear()
+    _SESSION_TURN_HISTORY.clear()
 
 
 def _now_iso() -> str:
@@ -66,6 +76,56 @@ def reset_mock_response_idx() -> None:
     _mock_response_idx = 0
 
 
+# ================================================================ Context assembly helpers
+
+def _build_context_view(
+    session_id: str,
+    current_content: str,
+    settings: ChatSettings,
+) -> str:
+    """Assemble a context string for the LLM from turn history, memory, and profile.
+
+    Respects max_context_messages, include_memory, include_profile settings.
+    Returns a string suitable for inclusion as the LLM user/system prompt context.
+    """
+    parts: list[str] = []
+
+    # ── System prompt ───────────────────────────────────────────────────────
+    if settings.system_prompt_override:
+        parts.append(f"[System] {settings.system_prompt_override}")
+
+    # ── Agent profile context ───────────────────────────────────────────────
+    if settings.include_profile:
+        parts.append(
+            "[Profile] Agent context: acting as the user's intelligent assistant. "
+            "Respond concisely and accurately."
+        )
+
+    # ── Memory context ──────────────────────────────────────────────────────
+    if settings.include_memory:
+        parts.append(
+            "[Memory] No prior memory candidates available for this session."
+        )
+
+    # ── Conversation history ────────────────────────────────────────────────
+    history = _SESSION_TURN_HISTORY.get(session_id, [])
+    max_ctx = settings.max_context_messages
+    # Each entry has user + assistant = 2 "messages"; take most recent turns
+    trimmed = history[-max_ctx:] if max_ctx > 0 else []
+    if trimmed:
+        history_lines = ["[History]"]
+        for entry in trimmed:
+            history_lines.append(f"  User: {entry['user']}")
+            if entry.get("assistant"):
+                history_lines.append(f"  Assistant: {entry['assistant']}")
+        parts.append("\n".join(history_lines))
+
+    # ── Current message ─────────────────────────────────────────────────────
+    parts.append(f"[Current] User: {current_content}")
+
+    return "\n".join(parts)
+
+
 # ================================================================ Behaviors
 
 
@@ -84,6 +144,8 @@ def chat_ingester(event, graph, ctx, *, settings: ChatSettings):
     Relations: derived_from_source, session_contains_turn, turn_from_input
 
     Session continuity: resumes existing session by user_ref (or explicit session_id).
+    Thread continuity: uses session_id as thread_id_hint so thread_tracker creates a
+      per-session comm_thread (key="chat::<session_id>") rather than a shared root.
     CommThread is created downstream by thread_tracker (Communication Pack).
     """
     obj = event.payload.get("object", {})
@@ -101,7 +163,6 @@ def chat_ingester(event, graph, ctx, *, settings: ChatSettings):
     reg = None
 
     if given_session_id:
-        # Look up by explicit session_id
         for k, v in _SESSION_REGISTRY.items():
             if v.get("session_id") == given_session_id:
                 reg = v
@@ -113,10 +174,10 @@ def chat_ingester(event, graph, ctx, *, settings: ChatSettings):
 
     if reg is not None:
         session_id = reg["session_id"]
-        thread_id = reg.get("thread_id")
+        # thread_id_hint = session_id ensures we reuse the same comm_thread
+        thread_id_hint = reg.get("thread_id_hint") or session_id
         turn_count = reg["turn_count"] + 1
     else:
-        # Create new ChatSession
         try:
             session_obj = graph.add_object("chat_session", {
                 "user_ref": user_ref,
@@ -129,7 +190,8 @@ def chat_ingester(event, graph, ctx, *, settings: ChatSettings):
             session_id = session_obj.id
         except Exception:
             return
-        thread_id = None
+        # Use session_id as the hint so each session → unique comm_thread
+        thread_id_hint = session_id
         turn_count = 1
 
     # ── 2. Create Core Source ──────────────────────────────────────────────
@@ -157,10 +219,10 @@ def chat_ingester(event, graph, ctx, *, settings: ChatSettings):
             "content": content,
             "direction": "inbound",
             "source_id": source_id,
-            "thread_id": thread_id,  # None for first turn — thread_tracker creates it
+            "thread_id": None,
             "frame_id": frame_id,
             "metadata": {
-                "thread_id_hint": thread_id,
+                "thread_id_hint": thread_id_hint,
                 "session_id": session_id,
             },
         })
@@ -206,9 +268,19 @@ def chat_ingester(event, graph, ctx, *, settings: ChatSettings):
     _MESSAGE_TO_SESSION[comm_msg_id] = session_id
     _SESSION_REGISTRY[session_key] = {
         "session_id": session_id,
-        "thread_id": thread_id,
+        "thread_id_hint": thread_id_hint,
         "turn_count": turn_count,
     }
+
+    # ── 6. Record in turn history for context assembly ─────────────────────
+    if session_id not in _SESSION_TURN_HISTORY:
+        _SESSION_TURN_HISTORY[session_id] = []
+    _SESSION_TURN_HISTORY[session_id].append({
+        "turn_number": turn_count,
+        "user": content,
+        "assistant": None,
+        "_turn_id": turn_id,
+    })
 
 
 @behavior(
@@ -224,7 +296,12 @@ def chat_llm_responder(event, graph, ctx, *, settings: ChatSettings):
     Creates: comm_response_candidate (status=approved if auto_approve_responses=True)
     Relations: response_to
 
-    Context assembly: reads prior ChatTurns for turn_number.
+    Context assembly (always performed, even in mock mode):
+      - prior turn history (up to max_context_messages turns)
+      - memory candidates (placeholder if include_memory=True)
+      - agent profile context (placeholder if include_profile=True)
+      - system_prompt_override if set
+
     llm_provider='mock' returns deterministic stubs — no API key required.
     """
     obj = event.payload.get("object", {})
@@ -240,7 +317,8 @@ def chat_llm_responder(event, graph, ctx, *, settings: ChatSettings):
     thread_id = msg_data.get("thread_id")
     frame_id = msg_data.get("frame_id")
 
-    # Find turn_number for mock response
+    # Resolve session_id and turn_number
+    session_id = _MESSAGE_TO_SESSION.get(msg_id)
     turn_number = 1
     turn_id = _MESSAGE_TO_TURN.get(msg_id)
     if turn_id:
@@ -251,14 +329,22 @@ def chat_llm_responder(event, graph, ctx, *, settings: ChatSettings):
         except Exception:
             pass
 
-    system_prompt = settings.system_prompt_override
-    provider = settings.llm_provider
+    # ── Context assembly ───────────────────────────────────────────────────
+    # Build the context view from history + memory + profile, respecting settings.
+    # This is assembled regardless of llm_provider so the structure is always correct.
+    context_view = _build_context_view(
+        session_id=session_id or "",
+        current_content=content,
+        settings=settings,
+    )
 
+    provider = settings.llm_provider
     if provider == "mock" or not provider:
-        response_content = _get_mock_response(content, turn_number, system_prompt)
+        response_content = _get_mock_response(content, turn_number, context_view)
     else:
-        # Real LLM hook — falls back to mock without an API key
-        response_content = _get_mock_response(content, turn_number, system_prompt)
+        # Real LLM integration point — falls back to mock without a configured key.
+        # TODO: wire openai/anthropic/openrouter SDK here using settings.model.
+        response_content = _get_mock_response(content, turn_number, context_view)
 
     status = "approved" if settings.auto_approve_responses else "proposed"
 
@@ -271,6 +357,9 @@ def chat_llm_responder(event, graph, ctx, *, settings: ChatSettings):
             "status": status,
             "created_by_behavior": "chat_llm_responder",
             "frame_id": frame_id,
+            "context_turn_count": len(
+                _SESSION_TURN_HISTORY.get(session_id or "", [])
+            ),
         })
         graph.add_relation("response_to", candidate.id, msg_id)
     except Exception:
@@ -287,6 +376,9 @@ def chat_responder(event, graph, ctx, *, settings: ChatSettings):
 
     On: object.created (comm_response_candidate, channel=chat, status=approved)
     Patches: chat_turn.assistant_message + response_candidate_id
+
+    Also updates _SESSION_TURN_HISTORY with the assistant message so subsequent
+    turns have full Q&A context available to chat_llm_responder.
 
     This is the 'delivery' step for the chat channel. After this fires,
     response_dispatcher (Communication Pack) marks the candidate as 'sent'.
@@ -312,6 +404,15 @@ def chat_responder(event, graph, ctx, *, settings: ChatSettings):
             })
         except Exception:
             pass
+
+    # Update turn history so next turns have assistant context
+    session_id = _MESSAGE_TO_SESSION.get(message_id)
+    if session_id and session_id in _SESSION_TURN_HISTORY:
+        history = _SESSION_TURN_HISTORY[session_id]
+        for entry in reversed(history):
+            if entry.get("_turn_id") == turn_id:
+                entry["assistant"] = response_content
+                break
 
 
 # ================================================================ BEHAVIORS registry
