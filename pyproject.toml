@@ -37,12 +37,11 @@ communication = "packs.communication:pack"
 chat = "packs.chat:pack"
 email = "packs.email:pack"
 
-# As new packs are added, register them here:
-# research = "packs.research:pack"
-# vc = "packs.vc:pack"
-# codebase = "packs.codebase:pack"
-# team_ops = "packs.team_ops:pack"
-# meeting = "packs.meeting:pack"
+research = "packs.research:pack"
+vc = "packs.vc:pack"
+codebase = "packs.codebase:pack"
+team_ops = "packs.team_ops:pack"
+meeting = "packs.meeting:pack"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -1,0 +1,27 @@
+# Codebase Pack Changelog
+
+## v0.1.0 — 2026-06-03
+
+### Added
+- `repo` object type: repository with full_name, language, stars, open issues
+- `code_file` object type: file within a repo with path and language detection
+- `code_function` object type: function/method with signature and docstring
+- `dependency` object type: package dependency with vulnerability tracking
+- `issue` object type: GitHub/GitLab issue with labels, state, and task link
+- `pull_request` object type: PR with state, branch, and merge tracking
+- `architecture_decision` object type: ADR with context/decision/consequences sections
+- `code_change` object type: commit or PR diff summary
+- `test_result` object type: test run with pass/fail/coverage stats
+- Relation types: `file_in_repo`, `function_in_file`, `repo_depends_on`, `issue_in_repo`, `pr_in_repo`, `adr_in_repo`, `change_in_repo`, `test_for_repo`, `derived_from_source`
+- `repo_ingester` behavior: ingests repo manifests and webhook repository events
+- `issue_tracker` behavior: creates Issue + Core task from webhook issue events
+- `adr_extractor` behavior: parses ADR markdown files at configured path patterns
+- `change_summarizer` behavior: summarizes push/PR webhook events into CodeChange
+- `dependency_auditor` behavior: creates Dependency objects with vulnerability flags
+- Module-level registries with `clear_codebase_registry()` for fixture isolation
+- Tools: `ingest_github_webhook`, `ingest_repo_file`, `create_repo`, `create_issue`
+- Two fixtures covering repo/issue/ADR tracking and code change tracking
+
+### Notes
+- v0.1 dependency auditing reads pre-parsed metadata; package.json/pyproject.toml parsing in v0.2
+- code_file and code_function objects created in v0.2 from repo file ingestion
