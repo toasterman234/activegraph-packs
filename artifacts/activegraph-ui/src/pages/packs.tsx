@@ -10,7 +10,7 @@ export default function Packs() {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto w-full">
+    <div className="p-4 sm:p-6 max-w-5xl mx-auto w-full">
       <h1 className="text-lg font-mono font-bold mb-6">PACK_REGISTRY</h1>
       
       {data?.packs && data.packs.length > 0 ? (

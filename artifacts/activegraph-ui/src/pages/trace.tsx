@@ -17,7 +17,7 @@ export default function Trace() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="p-4 border-b border-border flex items-center justify-between">
+      <div className="p-4 border-b border-border flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-lg font-mono font-bold">EVENT_TRACE</h1>
         <div className="text-xs font-mono text-muted-foreground">
           SHOWING LAST 100 EVENTS

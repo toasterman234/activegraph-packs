@@ -54,10 +54,10 @@ export default function Dashboard() {
   ];
 
   return (
-    <div className="p-6 flex flex-col gap-6 max-w-6xl mx-auto w-full">
-      <div className="flex justify-between items-center">
+    <div className="p-4 sm:p-6 flex flex-col gap-6 max-w-6xl mx-auto w-full">
+      <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-center">
         <div>
-          <h1 className="text-2xl font-mono font-bold">SYSTEM_DASHBOARD</h1>
+          <h1 className="text-xl sm:text-2xl font-mono font-bold">SYSTEM_DASHBOARD</h1>
           <p className="text-sm font-mono text-muted-foreground mt-1 text-[10px] uppercase tracking-wider">
             RUNTIME STATUS: {summary?.runtime_ready ? 'READY' : 'INITIALIZING'}
           </p>
