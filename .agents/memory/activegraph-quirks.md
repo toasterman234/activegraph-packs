@@ -28,3 +28,7 @@ responder, or the context arrives a turn too late.
 
 ## UI logs are derived client-side from /trace
 The api-server only proxies whole-collection GETs (/trace, /graph, /packs, /frames, /summary). There are NO per-object or per-behavior log endpoints. Any "logs for object X" or "logs for behavior Y" UI must fetch /trace and filter client-side by `object_id` / `behavior_name`. /trace is windowed (default limit 200, demo caps via `limit` param) so such views show only the latest N events, not full history — label them accordingly.
+
+## Mockup preview screenshots
+- `screenshot type=external_url` against a mockup-sandbox `/__mockup/preview/...` URL can capture a blank white page (it does not reliably wait for client-side React render).
+- Use `screenshot type=app_preview` with `artifact_dir_name="mockup-sandbox"` and `path="/preview/{folder}/{Component}"` — it waits for mount and returns browser logs. (Resolves to localhost:80/__mockup/preview/...)
