@@ -53,19 +53,30 @@ class ChatReply(BaseModel):
 
 # ================================================================ Provider config
 
-# Native ActiveGraph providers, keyed by the short provider id used in
-# settings / the config API. OpenRouter is intentionally omitted for now
-# (no native provider) — it is a planned follow-up via an OpenAI-compatible
-# adapter.
+# Chat providers, keyed by the short provider id used in settings / the config
+# API. OpenAI and Anthropic use their native ActiveGraph providers; OpenRouter
+# is OpenAI-compatible, so it reuses OpenAIProvider pointed at OpenRouter's
+# base URL (no extra dependency — the OpenAI SDK is already required).
 _PROVIDER_KEY_ENV: dict[str, str] = {
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
 }
 
 # Order used when auto-detecting which provider to use from the environment.
-_AUTODETECT_ORDER = ["openai", "anthropic"]
+_AUTODETECT_ORDER = ["openai", "anthropic", "openrouter"]
 
-# Provider ids that have a native ActiveGraph provider implementation.
+# Effective default model per provider when none is configured.
+_DEFAULT_MODELS: dict[str, str] = {
+    "openai": "gpt-4o-mini",
+    "anthropic": "claude-sonnet-4-5",
+    "openrouter": "openai/gpt-4o-mini",
+}
+
+# OpenRouter's OpenAI-compatible API base.
+_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+# Provider ids chat can use.
 SUPPORTED_PROVIDERS = list(_PROVIDER_KEY_ENV.keys())
 
 
@@ -80,11 +91,26 @@ _DEFAULT_MOCK_NOTE = (
     "\u2192 responder \u2192 turn), only the LLM itself is stubbed.\n\n"
     "To get real answers, add a provider API key:\n"
     "  \u2022 OPENAI_API_KEY \u2014 use OpenAI\n"
-    "  \u2022 ANTHROPIC_API_KEY \u2014 use Anthropic\n\n"
+    "  \u2022 ANTHROPIC_API_KEY \u2014 use Anthropic\n"
+    "  \u2022 OPENROUTER_API_KEY \u2014 use OpenRouter (OpenAI-compatible)\n\n"
     "Set it as an environment variable / Replit Secret, or add it on the "
     "Secrets page in this Inspector. As soon as a key is detected, chat "
     "upgrades to live mode automatically."
 )
+
+
+def _live_error_note(provider: str, key_env: Optional[str]) -> str:
+    """Instructive fallback text shown when a live provider call fails."""
+    key = key_env or "the provider API key"
+    return (
+        f"The live {provider} call failed, so this is a mock fallback reply — "
+        "the full ActiveGraph chat pipeline still ran end-to-end; only the "
+        "LLM call itself errored.\n\n"
+        f"Check that {key} holds a valid key and that the configured model "
+        "name is correct, then try again. You can update the key or model on "
+        "the Secrets page in this Inspector. Chat returns to live mode "
+        "automatically once a working key is in place."
+    )
 
 
 class MockChatProvider:
@@ -162,11 +188,66 @@ def _make_native_provider(provider: str, model: Optional[str]):
         inst: Any = OpenAIProvider()
     elif provider == "anthropic":
         inst = AnthropicProvider()
+    elif provider == "openrouter":
+        # OpenRouter speaks the OpenAI API; reuse OpenAIProvider with an
+        # OpenAI client pointed at OpenRouter's base URL. The key is read from
+        # OPENROUTER_API_KEY (never from code), same loud-failure contract.
+        from openai import OpenAI  # already a dependency of the OpenAI provider
+
+        client = OpenAI(
+            base_url=_OPENROUTER_BASE_URL,
+            api_key=os.environ.get("OPENROUTER_API_KEY"),
+        )
+        inst = OpenAIProvider(api_key_env="OPENROUTER_API_KEY", client=client)
     else:  # pragma: no cover - guarded by callers
         raise ValueError(f"no native provider for {provider!r}")
     if model:
         inst.default_model = model
+    elif provider in _DEFAULT_MODELS:
+        inst.default_model = _DEFAULT_MODELS[provider]
     return inst
+
+
+class FallbackChatProvider:
+    """Wrap a live provider so any completion failure degrades to an
+    instructive mock reply instead of failing the chat turn with no message.
+
+    The task requires that a provider/network/auth error never leaves the user
+    without an assistant reply — it must fall back to text that explains how to
+    fix the configuration. This wrapper preserves the native LLM lifecycle
+    (it is itself an ``LLMProvider``) and only intercepts exceptions from the
+    inner provider's ``complete``.
+    """
+
+    def __init__(self, inner: Any, *, provider: str, key_env: Optional[str]) -> None:
+        self._inner = inner
+        # @llm_behavior(model=None) reads default_model off the provider.
+        self.default_model = getattr(inner, "default_model", None)
+        self._mock = MockChatProvider(note=_live_error_note(provider, key_env))
+
+    def complete(self, **kwargs: Any) -> LLMResponse:
+        try:
+            return self._inner.complete(**kwargs)
+        except Exception:
+            return self._mock.complete(**kwargs)
+
+    def estimate_cost(self, **kwargs: Any) -> Decimal:
+        try:
+            return self._inner.estimate_cost(**kwargs)
+        except Exception:
+            return Decimal("0")
+
+    def count_tokens(self, **kwargs: Any) -> int:
+        try:
+            return self._inner.count_tokens(**kwargs)
+        except Exception:
+            return 0
+
+    def recognizes_model(self, name: str) -> bool:
+        try:
+            return bool(self._inner.recognizes_model(name))
+        except Exception:
+            return True
 
 
 def resolve_chat_config(
@@ -210,9 +291,7 @@ def resolve_chat_config(
         }
 
     key_env = _PROVIDER_KEY_ENV[chosen]
-    eff_model = model or (
-        "gpt-4o-mini" if chosen == "openai" else "claude-sonnet-4-5"
-    )
+    eff_model = model or _DEFAULT_MODELS.get(chosen, "gpt-4o-mini")
     return {
         "mode": "live",
         "provider": chosen,
@@ -230,13 +309,17 @@ def select_chat_provider(
 ) -> tuple[Any, dict[str, Any]]:
     """Return ``(provider_instance, info)`` for the resolved chat config.
 
-    ``info`` is the dict from :func:`resolve_chat_config`. The provider is a
-    native ActiveGraph provider in live mode, or :class:`MockChatProvider`
-    otherwise.
+    ``info`` is the dict from :func:`resolve_chat_config`. In live mode the
+    native provider is wrapped in :class:`FallbackChatProvider` so a provider
+    error degrades to an instructive mock reply rather than an empty turn; in
+    mock mode the provider is a plain :class:`MockChatProvider`.
     """
     info = resolve_chat_config(provider_pref=provider_pref, model=model)
     if info["mode"] == "live":
-        provider = _make_native_provider(info["provider"], info["model"])
+        native = _make_native_provider(info["provider"], info["model"])
+        provider: Any = FallbackChatProvider(
+            native, provider=info["provider"], key_env=info["key_env"]
+        )
     else:
         provider = MockChatProvider()
     return provider, info

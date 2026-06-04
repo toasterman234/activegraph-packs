@@ -220,6 +220,10 @@ def _build_runtime():
     if not resuming:
         _seed_demo(rt)
 
+    # Represent any env / Replit-Secret provider keys as name-only
+    # credential_refs in the graph (values are never read here).
+    _ensure_provider_credential_refs(rt.graph)
+
     rt.run_until_idle()
     return rt
 
@@ -271,6 +275,36 @@ def _reset_rt() -> list[str]:
         return failed
 
 
+def _ensure_provider_credential_refs(graph) -> int:
+    """Register a name-only ``credential_ref`` for every provider key present
+    in the environment (env / Replit Secrets), regardless of how it was set.
+
+    The task requires that a credential supplied via env or Replit Secrets is
+    represented in the graph the same way a Secrets-page entry is — a name-only
+    reference, never the value. Idempotent: skips names already registered.
+    Returns the number of refs added.
+    """
+    from packs.chat.llm import SUPPORTED_PROVIDERS, provider_key_env
+
+    existing = {
+        (o.data or {}).get("name")
+        for o in graph.all_objects()
+        if o.type == "credential_ref"
+    }
+    added = 0
+    for pid in SUPPORTED_PROVIDERS:
+        env = provider_key_env(pid)
+        if env and os.environ.get(env) and env not in existing:
+            graph.add_object("credential_ref", {
+                "name": env,
+                "scope": "read",
+                "provider_hint": pid,
+            })
+            existing.add(env)
+            added += 1
+    return added
+
+
 def _refresh_chat_provider() -> dict:
     """Re-resolve the chat LLM provider from the current environment and
     hot-swap it onto the live runtime.
@@ -287,6 +321,9 @@ def _refresh_chat_provider() -> dict:
     with _runtime_lock:
         if _rt is not None:
             _rt.llm_provider = provider
+            # A newly-detected env/Replit key should also appear in the graph
+            # as a name-only credential_ref, not just page-entered ones.
+            _ensure_provider_credential_refs(_rt.graph)
         _chat_config = info
     return info
 
@@ -295,7 +332,7 @@ def _chat_config_payload() -> dict:
     """Public, secret-free view of the chat LLM configuration."""
     from packs.chat.llm import SUPPORTED_PROVIDERS, provider_key_env
 
-    labels = {"openai": "OpenAI", "anthropic": "Anthropic"}
+    labels = {"openai": "OpenAI", "anthropic": "Anthropic", "openrouter": "OpenRouter"}
     providers = []
     for pid in SUPPORTED_PROVIDERS:
         env = provider_key_env(pid)

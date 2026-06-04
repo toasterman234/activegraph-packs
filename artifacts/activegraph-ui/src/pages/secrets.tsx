@@ -17,6 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 const PROVIDER_KEY_HINTS: Record<string, string> = {
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
 };
 
 export default function Secrets() {
@@ -77,6 +78,20 @@ export default function Secrets() {
           refresh();
         },
         onError: () => toast({ title: "Failed to update config", variant: "destructive" }),
+      },
+    );
+  };
+
+  const applyModel = () => {
+    const m = model.trim();
+    updateConfig.mutate(
+      { data: { model: m || null } },
+      {
+        onSuccess: () => {
+          toast({ title: m ? `Model set to ${m}` : "Model override cleared" });
+          refresh();
+        },
+        onError: () => toast({ title: "Failed to update model", variant: "destructive" }),
       },
     );
   };
@@ -178,9 +193,22 @@ export default function Secrets() {
               <Input
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                placeholder="MODEL OVERRIDE (optional, e.g. gpt-4o)"
+                placeholder={
+                  config?.model
+                    ? `MODEL: ${config.model} — type to override`
+                    : "MODEL OVERRIDE (optional, e.g. gpt-4o)"
+                }
                 className="font-mono text-xs rounded-none border-border bg-background h-9"
               />
+              <Button
+                size="sm"
+                variant="outline"
+                className="rounded-none h-9 text-[10px] font-mono shrink-0"
+                disabled={updateConfig.isPending}
+                onClick={applyModel}
+              >
+                SET MODEL
+              </Button>
             </div>
           </div>
 
