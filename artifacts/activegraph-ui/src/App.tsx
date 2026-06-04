@@ -9,6 +9,10 @@ import Objects from "@/pages/objects";
 import ObjectDetail from "@/pages/object-detail";
 import BehaviorDetail from "@/pages/behavior-detail";
 import Trace from "@/pages/trace";
+import Relations from "@/pages/relations";
+import Patches from "@/pages/patches";
+import Tools from "@/pages/tools";
+import Failures from "@/pages/failures";
 import Packs from "@/pages/packs";
 import Frames from "@/pages/frames";
 import Chat from "@/pages/chat";
@@ -28,6 +32,10 @@ function Router() {
         <Route path="/objects/:id" component={ObjectDetail} />
         <Route path="/behaviors/:name" component={BehaviorDetail} />
         <Route path="/trace" component={Trace} />
+        <Route path="/relations" component={Relations} />
+        <Route path="/patches" component={Patches} />
+        <Route path="/tools" component={Tools} />
+        <Route path="/failures" component={Failures} />
         <Route path="/packs" component={Packs} />
         <Route path="/frames" component={Frames} />
         <Route path="/chat" component={Chat} />

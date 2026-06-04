@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { Activity, Box, Boxes, ListTree, Package, LayoutDashboard, MessageSquare, KeyRound, UserCog, Menu } from "lucide-react";
+import { Activity, Box, Boxes, ListTree, Package, LayoutDashboard, MessageSquare, KeyRound, UserCog, Menu, Share2, FileDiff, Wrench, AlertTriangle } from "lucide-react";
 import { useHealthCheck } from "@workspace/api-client-react";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 
@@ -9,6 +9,10 @@ const navItems = [
   { href: "/graph", label: "Graph", icon: Box },
   { href: "/objects", label: "Objects", icon: Boxes },
   { href: "/trace", label: "Trace", icon: Activity },
+  { href: "/relations", label: "Relations", icon: Share2 },
+  { href: "/patches", label: "Patches", icon: FileDiff },
+  { href: "/tools", label: "Tools", icon: Wrench },
+  { href: "/failures", label: "Failures", icon: AlertTriangle },
   { href: "/packs", label: "Packs", icon: Package },
   { href: "/frames", label: "Frames", icon: ListTree },
   { href: "/chat", label: "Chat", icon: MessageSquare },
