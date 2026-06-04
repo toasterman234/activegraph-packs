@@ -46,6 +46,7 @@ packs/chat/CHANGELOG.md
 packs/chat/README.md
 packs/chat/__init__.py
 packs/chat/behaviors.py
+packs/chat/llm.py
 packs/chat/object_types.py
 packs/chat/settings.py
 packs/chat/tools.py
@@ -99,6 +100,7 @@ packs/entity/tools.py
 packs/entity/fixtures/__init__.py
 packs/entity/fixtures/run_fixtures.py
 packs/fixtures/README.md
+packs/fixtures/chat_memory_cross_session.py
 packs/fixtures/comm_chat_email_integration.py
 packs/fixtures/cross_pack_integration.py
 packs/fixtures/identity_profile_entity_integration.py
@@ -178,4 +180,6 @@ packs/vc/tools.py
 packs/vc/fixtures/__init__.py
 packs/vc/fixtures/run_fixtures.py
 tests/test_cross_pack_fixtures.py
+tests/test_memory_embedding_seam.py
+tests/test_memory_subject_scoping.py
 tests/test_pack_fixtures.py

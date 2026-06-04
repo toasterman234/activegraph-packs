@@ -18,9 +18,20 @@ Dynamic: license-file
 
 # activegraph-packs [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-An open-source collection of [ActiveGraph](https://pypi.org/project/activegraph/) packs, bundles, a Python demo server, and a React Inspector UI. Two goals: (1) a working demo of what a multi-pack assistant substrate looks like out of the box, and (2) a pack library where the best packs can be upstreamed into the activegraph repository itself.
+An open-source collection of [ActiveGraph](https://pypi.org/project/activegraph/) packs, bundles, a Python demo server, and a React Inspector UI.
 
-ActiveGraph is a reactive object-graph runtime for Python. You define objects (typed nodes), relations (typed edges), behaviors (reactive handlers that fire on mutation), and tools (callable capabilities). This repo shows how to compose 15 of those into a coherent, auditable assistant architecture — no central orchestrator, no monolithic pipeline.
+**What this repo is for.** It is a **prototyping ground and reference showcase for
+how packs should be built and composed** on top of ActiveGraph — not a product.
+It exists to make the conventions concrete: the layering model, the coordination
+style, and the open-source hygiene that keep a multi-pack assistant coherent. The
+best packs that emerge here are candidates for upstreaming into the ActiveGraph
+package itself.
+
+ActiveGraph is a reactive object-graph runtime for Python. You define objects (typed nodes), relations (typed edges), behaviors (reactive handlers that fire on mutation), and tools (callable capabilities). This repo shows how to compose 15 packs plus a bridge pack (16 entry points) into a coherent, auditable assistant architecture — no central orchestrator, no monolithic pipeline. Coordination is *emergent*: one pack writes an object, that write is an event, and the event triggers a behavior in another pack.
+
+> **New here? Read [docs/concepts.md](docs/concepts.md) first** — it explains the
+> event-sourced graph model and the central idea of this repo: the split between the
+> minimal **Core Pack** and the **layered (domain) packs** that build on it.
 
 ---
 
@@ -52,6 +63,31 @@ python packs/demo_server.py
 ```
 
 ---
+
+## Core and Layered Packs
+
+The organizing idea of this repo is a two-tier pack model.
+
+- **The Core Pack** (`packs/core`) is the universal substrate: 7 object types and 7
+  relation types (`source`, `observation`, `task`, `action`, `artifact`,
+  `memory_candidate`, `evaluation`) that every other pack speaks. It depends on
+  nothing and stays deliberately minimal — no people, companies, claims, or
+  documents. Keeping Core tiny is what keeps it a shared *lingua franca* instead of
+  a universal ontology that domain packs have to fight.
+
+- **Layered packs** are everything else. Each documents `requires = ["core"]` (some
+  also require `communication`) and optionally cooperates with other packs via
+  `integrates_with`, which must be optional — packs degrade gracefully when an
+  integration is absent. (These dependency declarations are conventions recorded in
+  each pack's README and `__init__.py` and respected through load order, not
+  enforced kwargs on `Pack(...)`.) Layered packs split into *infrastructure* (tool gateway,
+  secrets, memory, identity, agent profile, entity), *communication* (channel-neutral
+  messaging plus chat/email adapters), and *domain* verticals (research, vc,
+  codebase, team_ops, meeting). Domain packs map their outputs back to Core
+  primitives, so infrastructure packs never need to know they exist.
+
+Full explanation, dependency graph, and the invariants that hold it together:
+**[docs/concepts.md](docs/concepts.md)**.
 
 ## What's in the box
 
@@ -104,7 +140,7 @@ The demo has three components:
 ```
 Inspector UI (React + Vite)
        |
-       |  REST (polls every 3s)
+       |  REST (polls every ~5s)
        v
 API Server (Express, port 5000)
        |
@@ -114,12 +150,14 @@ Demo Server (Python, port 7788)
        |
        v
 ActiveGraph Runtime
-  ├─ 15 packs loaded
+  ├─ 16 packs loaded (15 + diligence_core_bridge)
   ├─ SQLite event log     →  data/activegraph_demo.sqlite
   └─ SQLite memory store  →  data/activegraph_memory.sqlite
 ```
 
 The demo server is a standalone Python HTTP server (`packs/demo_server.py`). The API server (Express) proxies requests from the React UI and manages the Python process as a subprocess — so starting the API server is enough to get the full stack running.
+
+For the full architecture, the frames-vs-trace model, and a tour of the Inspector UI pages, see **[docs/architecture.md](docs/architecture.md)**.
 
 ### Demo server endpoints
 
@@ -195,9 +233,22 @@ python packs/fixtures/comm_chat_email_integration.py
 
 # Identity + Profile + Entity integration
 python packs/fixtures/identity_profile_entity_integration.py
+
+# Chat long-term memory across sessions (write → restart → recall)
+python packs/fixtures/chat_memory_cross_session.py
 ```
 
 The demo server also loads all fixture data on startup — `POST /reset` re-seeds from scratch if you want a clean run.
+
+---
+
+## Documentation
+
+Full docs index: **[docs/README.md](docs/README.md)**.
+
+- **[docs/concepts.md](docs/concepts.md)** — Core and Layered Packs: the event-sourced graph substrate, the Core-vs-layered model, how coordination emerges without an orchestrator, and the invariants. **Start here.**
+- **[docs/architecture.md](docs/architecture.md)** — The demo stack (Inspector UI → API server → Python runtime), demo server endpoints, frames vs. the trace, and the Inspector UI pages.
+- **[docs/long-term-memory.md](docs/long-term-memory.md)** — Conversation-driven long-term memory: how the assistant builds and recalls durable, cross-session, per-user memory with no LLM or API key, and the swappable seams for write-path ingestion, the storage backend (e.g. mem0), and embedding-based retrieval.
 
 ---
 

@@ -14,8 +14,11 @@ run = "pnpm --filter @workspace/api-server run dev"
 
 [services.production]
 
+# Install the Python package + deps into .pythonlibs first, then build the server.
+# The API server spawns packs/demo_server.py at runtime, which needs `activegraph`
+# importable in production.
 [services.production.build]
-args = ["pnpm", "--filter", "@workspace/api-server", "run", "build"]
+args = ["bash", "-lc", "pip install --user -e . && pnpm --filter @workspace/api-server run build"]
 
 [services.production.build.env]
 NODE_ENV = "production"
