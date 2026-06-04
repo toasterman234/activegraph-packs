@@ -65,7 +65,7 @@ comm_response_candidate.created [channel=chat, status=approved]
 
 ```python
 ChatSettings(
-    llm_provider="mock",           # "mock" | "openai" | "anthropic" | "openrouter"
+    llm_provider="mock",           # "mock" | "openai" | "anthropic"
     model="gpt-4o-mini",           # Ignored for mock
     system_prompt_override=None,   # Override AgentProfile system prompt
     max_context_messages=10,       # Prior turns in LLM context

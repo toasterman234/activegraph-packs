@@ -332,7 +332,7 @@ def _chat_config_payload() -> dict:
     """Public, secret-free view of the chat LLM configuration."""
     from packs.chat.llm import SUPPORTED_PROVIDERS, provider_key_env
 
-    labels = {"openai": "OpenAI", "anthropic": "Anthropic", "openrouter": "OpenRouter"}
+    labels = {"openai": "OpenAI", "anthropic": "Anthropic"}
     providers = []
     for pid in SUPPORTED_PROVIDERS:
         env = provider_key_env(pid)

@@ -18,7 +18,7 @@ class ChatSettings(BaseModel):
         description=(
             "LLM provider for chat_llm_responder. 'mock' returns deterministic "
             "stub responses (useful for fixtures/tests). "
-            "Other values: 'openai', 'anthropic', 'openrouter'. Default: 'mock'."
+            "Other values: 'openai', 'anthropic'. Default: 'mock'."
         ),
     )
     model: str = Field(

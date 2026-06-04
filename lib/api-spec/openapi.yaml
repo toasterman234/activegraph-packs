@@ -466,7 +466,7 @@ components:
     ChatConfigInput:
       type: object
       properties:
-        provider: { type: ["string", "null"], description: "Provider id (openai, anthropic, openrouter) or empty to auto-detect" }
+        provider: { type: ["string", "null"], description: "Provider id (openai, anthropic) or empty to auto-detect" }
         model:    { type: ["string", "null"], description: "Model name; empty to use provider default" }
 
     SecretRef:

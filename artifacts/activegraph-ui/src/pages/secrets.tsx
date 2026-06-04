@@ -17,7 +17,6 @@ import { useToast } from "@/hooks/use-toast";
 const PROVIDER_KEY_HINTS: Record<string, string> = {
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
-  openrouter: "OPENROUTER_API_KEY",
 };
 
 export default function Secrets() {

@@ -54,27 +54,20 @@ class ChatReply(BaseModel):
 # ================================================================ Provider config
 
 # Chat providers, keyed by the short provider id used in settings / the config
-# API. OpenAI and Anthropic use their native ActiveGraph providers; OpenRouter
-# is OpenAI-compatible, so it reuses OpenAIProvider pointed at OpenRouter's
-# base URL (no extra dependency — the OpenAI SDK is already required).
+# API. OpenAI and Anthropic use their native ActiveGraph providers.
 _PROVIDER_KEY_ENV: dict[str, str] = {
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
-    "openrouter": "OPENROUTER_API_KEY",
 }
 
 # Order used when auto-detecting which provider to use from the environment.
-_AUTODETECT_ORDER = ["openai", "anthropic", "openrouter"]
+_AUTODETECT_ORDER = ["openai", "anthropic"]
 
 # Effective default model per provider when none is configured.
 _DEFAULT_MODELS: dict[str, str] = {
     "openai": "gpt-4o-mini",
     "anthropic": "claude-sonnet-4-5",
-    "openrouter": "openai/gpt-4o-mini",
 }
-
-# OpenRouter's OpenAI-compatible API base.
-_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # Provider ids chat can use.
 SUPPORTED_PROVIDERS = list(_PROVIDER_KEY_ENV.keys())
@@ -91,8 +84,7 @@ _DEFAULT_MOCK_NOTE = (
     "\u2192 responder \u2192 turn), only the LLM itself is stubbed.\n\n"
     "To get real answers, add a provider API key:\n"
     "  \u2022 OPENAI_API_KEY \u2014 use OpenAI\n"
-    "  \u2022 ANTHROPIC_API_KEY \u2014 use Anthropic\n"
-    "  \u2022 OPENROUTER_API_KEY \u2014 use OpenRouter (OpenAI-compatible)\n\n"
+    "  \u2022 ANTHROPIC_API_KEY \u2014 use Anthropic\n\n"
     "Set it as an environment variable / Replit Secret, or add it on the "
     "Secrets page in this Inspector. As soon as a key is detected, chat "
     "upgrades to live mode automatically."
@@ -188,17 +180,6 @@ def _make_native_provider(provider: str, model: Optional[str]):
         inst: Any = OpenAIProvider()
     elif provider == "anthropic":
         inst = AnthropicProvider()
-    elif provider == "openrouter":
-        # OpenRouter speaks the OpenAI API; reuse OpenAIProvider with an
-        # OpenAI client pointed at OpenRouter's base URL. The key is read from
-        # OPENROUTER_API_KEY (never from code), same loud-failure contract.
-        from openai import OpenAI  # already a dependency of the OpenAI provider
-
-        client = OpenAI(
-            base_url=_OPENROUTER_BASE_URL,
-            api_key=os.environ.get("OPENROUTER_API_KEY"),
-        )
-        inst = OpenAIProvider(api_key_env="OPENROUTER_API_KEY", client=client)
     else:  # pragma: no cover - guarded by callers
         raise ValueError(f"no native provider for {provider!r}")
     if model:
