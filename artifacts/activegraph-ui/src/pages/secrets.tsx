@@ -271,9 +271,13 @@ export default function Secrets() {
                   >
                     <div className="flex flex-col">
                       <span className="text-foreground">{c.name}</span>
-                      {c.provider_hint && (
-                        <span className="text-[10px] text-muted-foreground">{c.provider_hint}</span>
-                      )}
+                      <span className="text-[10px] text-muted-foreground">
+                        {c.provider_hint ? `${c.provider_hint} · ` : ""}
+                        used {c.use_count ?? 0}×
+                        {c.last_used_at
+                          ? ` · last ${new Date(c.last_used_at).toLocaleString()}`
+                          : " · never used"}
+                      </span>
                     </div>
                     {c.value_present ? (
                       <span className="flex items-center gap-1 text-[10px] text-green-400">
