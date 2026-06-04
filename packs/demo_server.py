@@ -52,6 +52,15 @@ _RESERVED_ENV_NAMES = frozenset({
     "HOME", "SHELL", "IFS", "BASH_ENV", "ENV", "PWD", "PORT",
 })
 
+# Allowed enum values for the agent-profile editor, mirroring the pydantic
+# Literal fields in packs/agent_profile/object_types.py. Validated server-side
+# so the editor cannot write a value the assembler would not understand.
+_TONES = ("neutral", "warm", "direct", "formal", "casual", "technical")
+_VERBOSITIES = ("concise", "balanced", "detailed")
+_FORMALITIES = ("informal", "neutral", "formal")
+_GOAL_PRIORITIES = ("low", "medium", "high", "critical")
+_GOAL_STATUSES = ("active", "paused", "completed", "cancelled")
+
 def _ts() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -386,6 +395,131 @@ def _secrets_payload(graph) -> dict:
     return {"credentials": credentials, "total": len(credentials)}
 
 
+# ─── Agent profile helpers ────────────────────────────────────────────────────
+
+def _active_profile_id(graph) -> Any:
+    """Return the id of the active AgentProfile (or the first one), else None.
+
+    graph.all_objects() is safe here — the demo server runs these reads at
+    request time, outside any behavior context.
+    """
+    profiles = [o for o in graph.all_objects() if o.type == "agent_profile"]
+    for o in profiles:
+        if (o.data or {}).get("active"):
+            return str(o.id)
+    return str(profiles[0].id) if profiles else None
+
+
+def _owned_profile_object(graph, oid: str, expected_type: str, pid: str):
+    """Return the object iff it exists, is ``expected_type`` and belongs to ``pid``.
+
+    Guards the goal/instruction update & delete endpoints against caller-supplied
+    IDs that point at unrelated objects (other types, or another profile's data).
+    Returns None when the object is missing, the wrong type, or owned by a
+    different profile so callers can reject with a 404.
+    """
+    obj = graph.get_object(str(oid))
+    if obj is None or obj.type != expected_type:
+        return None
+    if (obj.data or {}).get("profile_id") != pid:
+        return None
+    return obj
+
+
+def _profile_payload(graph) -> dict:
+    """Assemble the editor view of the agent's identity from graph objects.
+
+    Returns the active AgentProfile plus its global PersonalityProfile, goals,
+    and standing instructions (all filtered by profile_id). When no profile
+    exists, ``exists`` is False so the UI can offer to seed the default.
+    """
+    pid = _active_profile_id(graph)
+    if not pid:
+        return {
+            "exists": False,
+            "profile": None,
+            "personality": None,
+            "goals": [],
+            "instructions": [],
+        }
+
+    profile_obj = graph.get_object(pid)
+    pdata = (profile_obj.data if profile_obj else {}) or {}
+    profile = {
+        "id": pid,
+        "name": pdata.get("name", ""),
+        "mission": pdata.get("mission", ""),
+        "personality_description": pdata.get("personality_description", ""),
+        "owner_name": pdata.get("owner_name"),
+        "version": str(pdata.get("version", "1")),
+        "active": bool(pdata.get("active", True)),
+    }
+
+    goals: list[dict] = []
+    instructions: list[dict] = []
+    personality: dict | None = None
+    for o in graph.all_objects():
+        d = o.data or {}
+        if d.get("profile_id") != pid:
+            continue
+        if o.type == "goal":
+            goals.append({
+                "id": str(o.id),
+                "text": d.get("text", ""),
+                "priority": d.get("priority", "medium"),
+                "status": d.get("status", "active"),
+                "domain": d.get("domain"),
+            })
+        elif o.type == "standing_instruction":
+            instructions.append({
+                "id": str(o.id),
+                "text": d.get("text", ""),
+                "scope": d.get("scope", "global"),
+                "priority": int(d.get("priority", 50)),
+                "active": bool(d.get("active", True)),
+                "applies_to_channel": d.get("applies_to_channel"),
+                "applies_to_audience_role": d.get("applies_to_audience_role"),
+            })
+        elif o.type == "personality_profile":
+            is_global = (
+                d.get("applies_to_channel") is None
+                and d.get("applies_to_audience_role") is None
+            )
+            # Prefer the global (unscoped) personality; fall back to any.
+            if personality is None or is_global:
+                cand = {
+                    "id": str(o.id),
+                    "tone": d.get("tone", "neutral"),
+                    "verbosity": d.get("verbosity", "balanced"),
+                    "formality": d.get("formality", "neutral"),
+                }
+                if is_global or personality is None:
+                    personality = cand
+
+    return {
+        "exists": True,
+        "profile": profile,
+        "personality": personality,
+        "goals": goals,
+        "instructions": instructions,
+    }
+
+
+def _global_personality_obj(graph, profile_id: str):
+    """Return the unscoped (global) personality_profile object for a profile."""
+    for o in graph.all_objects():
+        if o.type != "personality_profile":
+            continue
+        d = o.data or {}
+        if (
+            d.get("profile_id") == profile_id
+            and d.get("applies_to_channel") is None
+            and d.get("applies_to_audience_role") is None
+        ):
+            return o
+    return None
+
+
 # ─── Serialisation helpers ────────────────────────────────────────────────────
 
 def _event_to_dict(evt) -> dict:
@@ -601,6 +735,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_chat_config_get()
             elif path == "/secrets":
                 self._handle_secrets_get()
+            elif path == "/profile":
+                self._handle_profile_get()
             elif path == "/health":
                 self._send_json({"status": "ok"})
             else:
@@ -622,6 +758,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_chat_config_post(body)
             elif path == "/secrets":
                 self._handle_secrets_post(body)
+            elif path == "/profile":
+                self._handle_profile_post(body)
+            elif path == "/profile/seed":
+                self._handle_profile_seed()
+            elif path == "/profile/personality":
+                self._handle_profile_personality_post(body)
+            elif path == "/profile/goal":
+                self._handle_profile_goal_post(body)
+            elif path == "/profile/goal/delete":
+                self._handle_profile_goal_delete(body)
+            elif path == "/profile/instruction":
+                self._handle_profile_instruction_post(body)
+            elif path == "/profile/instruction/delete":
+                self._handle_profile_instruction_delete(body)
             else:
                 self._send_error("Not found", 404)
         except Exception as e:
@@ -890,6 +1040,241 @@ class Handler(BaseHTTPRequestHandler):
         payload = _secrets_payload(rt.graph)
         payload["chat_config"] = _chat_config_payload()
         self._send_json(payload)
+
+    # ── GET/POST /profile ───────────────────────────────────────────────────
+
+    def _handle_profile_get(self):
+        rt = _get_rt()
+        self._send_json(_profile_payload(rt.graph))
+
+    def _profile_settle(self, rt):
+        """Settle a profile mutation and keep the in-memory registry in sync.
+
+        patch_object / remove_object do NOT fire the registry recorder
+        behaviors (those only react to object.created), so after any write we
+        rebuild the local profile registry from graph state — otherwise chat
+        context assembly would serve stale identity after an edit or delete.
+        """
+        from packs.agent_profile.behaviors import rebuild_profile_registry
+
+        rt.run_until_idle()
+        rebuild_profile_registry(rt.graph)
+
+    def _handle_profile_seed(self):
+        """Create the seeded default AgentProfile when none exists (empty state)."""
+        from bundles import seed_default_profile
+
+        rt = _get_rt()
+        with _runtime_lock:
+            seed_default_profile(rt)
+            self._profile_settle(rt)
+        self._send_json(_profile_payload(rt.graph))
+
+    def _handle_profile_post(self, body: dict):
+        """Update the active AgentProfile's identity fields."""
+        rt = _get_rt()
+        pid = _active_profile_id(rt.graph)
+        if not pid:
+            self._send_error("No profile exists yet — create one first.", 404)
+            return
+
+        updates: dict = {}
+        for field in ("name", "mission", "personality_description", "owner_name"):
+            if field in body:
+                v = body.get(field)
+                if field == "owner_name":
+                    updates[field] = (str(v).strip() or None) if v is not None else None
+                else:
+                    updates[field] = "" if v is None else str(v)
+
+        if "name" in updates and not updates["name"].strip():
+            self._send_error("name cannot be empty", 400)
+            return
+
+        with _runtime_lock:
+            if updates:
+                rt.graph.patch_object(pid, updates)
+                self._profile_settle(rt)
+        self._send_json(_profile_payload(rt.graph))
+
+    def _handle_profile_personality_post(self, body: dict):
+        """Upsert the global (unscoped) PersonalityProfile for the active profile."""
+        rt = _get_rt()
+        pid = _active_profile_id(rt.graph)
+        if not pid:
+            self._send_error("No profile exists yet — create one first.", 404)
+            return
+
+        tone = (body.get("tone") or "neutral")
+        verbosity = (body.get("verbosity") or "balanced")
+        formality = (body.get("formality") or "neutral")
+        if tone not in _TONES:
+            self._send_error(f"tone must be one of {', '.join(_TONES)}", 400)
+            return
+        if verbosity not in _VERBOSITIES:
+            self._send_error(f"verbosity must be one of {', '.join(_VERBOSITIES)}", 400)
+            return
+        if formality not in _FORMALITIES:
+            self._send_error(f"formality must be one of {', '.join(_FORMALITIES)}", 400)
+            return
+
+        with _runtime_lock:
+            existing = _global_personality_obj(rt.graph, pid)
+            if existing is not None:
+                rt.graph.patch_object(
+                    str(existing.id),
+                    {"tone": tone, "verbosity": verbosity, "formality": formality},
+                )
+            else:
+                rt.graph.add_object("personality_profile", {
+                    "tone": tone,
+                    "verbosity": verbosity,
+                    "formality": formality,
+                    "applies_to_channel": None,
+                    "applies_to_audience_role": None,
+                    "profile_id": pid,
+                    "metadata": {},
+                })
+            self._profile_settle(rt)
+        self._send_json(_profile_payload(rt.graph))
+
+    def _handle_profile_goal_post(self, body: dict):
+        """Create or update a Goal (update when an ``id`` is supplied)."""
+        rt = _get_rt()
+        pid = _active_profile_id(rt.graph)
+        if not pid:
+            self._send_error("No profile exists yet — create one first.", 404)
+            return
+
+        gid = body.get("id")
+        text = (body.get("text") or "").strip()
+        priority = (body.get("priority") or "medium")
+        status = (body.get("status") or "active")
+        domain = body.get("domain")
+        domain = (str(domain).strip() or None) if domain is not None else None
+
+        if not text:
+            self._send_error("text is required", 400)
+            return
+        if priority not in _GOAL_PRIORITIES:
+            self._send_error(f"priority must be one of {', '.join(_GOAL_PRIORITIES)}", 400)
+            return
+        if status not in _GOAL_STATUSES:
+            self._send_error(f"status must be one of {', '.join(_GOAL_STATUSES)}", 400)
+            return
+
+        if gid and not _owned_profile_object(rt.graph, str(gid), "goal", pid):
+            self._send_error("Goal not found for the active profile.", 404)
+            return
+
+        with _runtime_lock:
+            if gid:
+                rt.graph.patch_object(str(gid), {
+                    "text": text,
+                    "priority": priority,
+                    "status": status,
+                    "domain": domain,
+                })
+            else:
+                rt.graph.add_object("goal", {
+                    "text": text,
+                    "priority": priority,
+                    "status": status,
+                    "domain": domain,
+                    "profile_id": pid,
+                    "metadata": {},
+                })
+            self._profile_settle(rt)
+        self._send_json(_profile_payload(rt.graph))
+
+    def _handle_profile_goal_delete(self, body: dict):
+        rt = _get_rt()
+        gid = body.get("id")
+        if not gid:
+            self._send_error("id is required", 400)
+            return
+        pid = _active_profile_id(rt.graph)
+        if not pid or not _owned_profile_object(rt.graph, str(gid), "goal", pid):
+            self._send_error("Goal not found for the active profile.", 404)
+            return
+        with _runtime_lock:
+            rt.graph.remove_object(str(gid))
+            self._profile_settle(rt)
+        self._send_json(_profile_payload(rt.graph))
+
+    def _handle_profile_instruction_post(self, body: dict):
+        """Create or update a StandingInstruction (update when an ``id`` is supplied)."""
+        rt = _get_rt()
+        pid = _active_profile_id(rt.graph)
+        if not pid:
+            self._send_error("No profile exists yet — create one first.", 404)
+            return
+
+        iid = body.get("id")
+        text = (body.get("text") or "").strip()
+        scope = (body.get("scope") or "global").strip() or "global"
+        active = body.get("active")
+        active = True if active is None else bool(active)
+        channel = body.get("applies_to_channel")
+        channel = (str(channel).strip() or None) if channel is not None else None
+        role = body.get("applies_to_audience_role")
+        role = (str(role).strip() or None) if role is not None else None
+
+        try:
+            priority = int(body.get("priority", 50))
+        except (TypeError, ValueError):
+            self._send_error("priority must be an integer between 0 and 100", 400)
+            return
+
+        if not text:
+            self._send_error("text is required", 400)
+            return
+        if not (0 <= priority <= 100):
+            self._send_error("priority must be between 0 and 100", 400)
+            return
+
+        if iid and not _owned_profile_object(rt.graph, str(iid), "standing_instruction", pid):
+            self._send_error("Instruction not found for the active profile.", 404)
+            return
+
+        with _runtime_lock:
+            if iid:
+                rt.graph.patch_object(str(iid), {
+                    "text": text,
+                    "scope": scope,
+                    "priority": priority,
+                    "active": active,
+                    "applies_to_channel": channel,
+                    "applies_to_audience_role": role,
+                })
+            else:
+                rt.graph.add_object("standing_instruction", {
+                    "text": text,
+                    "scope": scope,
+                    "priority": priority,
+                    "active": active,
+                    "applies_to_channel": channel,
+                    "applies_to_audience_role": role,
+                    "profile_id": pid,
+                    "metadata": {},
+                })
+            self._profile_settle(rt)
+        self._send_json(_profile_payload(rt.graph))
+
+    def _handle_profile_instruction_delete(self, body: dict):
+        rt = _get_rt()
+        iid = body.get("id")
+        if not iid:
+            self._send_error("id is required", 400)
+            return
+        pid = _active_profile_id(rt.graph)
+        if not pid or not _owned_profile_object(rt.graph, str(iid), "standing_instruction", pid):
+            self._send_error("Instruction not found for the active profile.", 404)
+            return
+        with _runtime_lock:
+            rt.graph.remove_object(str(iid))
+            self._profile_settle(rt)
+        self._send_json(_profile_payload(rt.graph))
 
     # ── POST /reset ────────────────────────────────────────────────────────
 

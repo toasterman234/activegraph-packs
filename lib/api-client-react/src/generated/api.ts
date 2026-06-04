@@ -24,13 +24,19 @@ import type {
   ChatConfigInput,
   ChatMessageInput,
   ChatResponse,
+  DeleteInput,
   ErrorResponse,
   FramesResponse,
   GetGraphParams,
   GetTraceParams,
+  GoalInput,
   GraphResponse,
   HealthStatus,
+  InstructionInput,
   PacksResponse,
+  PersonalityInput,
+  ProfileResponse,
+  ProfileUpdateInput,
   ResetResponse,
   SecretInput,
   SecretsResponse,
@@ -973,5 +979,586 @@ export const useSetSecret = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getSetSecretMutationOptions(options));
+    }
+
+export const getGetProfileUrl = () => {
+
+
+
+
+  return `/api/activegraph/profile`
+}
+
+/**
+ * Returns the active agent profile with its personality, goals, and standing instructions. exists=false when no profile has been created yet.
+ * @summary Get agent profile
+ */
+export const getProfile = async ( options?: RequestInit): Promise<ProfileResponse> => {
+
+  return customFetch<ProfileResponse>(getGetProfileUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetProfileQueryKey = () => {
+    return [
+    `/api/activegraph/profile`
+    ] as const;
+    }
+
+
+export const getGetProfileQueryOptions = <TData = Awaited<ReturnType<typeof getProfile>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getProfile>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetProfileQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getProfile>>> = ({ signal }) => getProfile({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getProfile>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetProfileQueryResult = NonNullable<Awaited<ReturnType<typeof getProfile>>>
+export type GetProfileQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get agent profile
+ */
+
+export function useGetProfile<TData = Awaited<ReturnType<typeof getProfile>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getProfile>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetProfileQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getUpdateProfileUrl = () => {
+
+
+
+
+  return `/api/activegraph/profile`
+}
+
+/**
+ * Updates the active agent profile's name, mission, personality description, and owner name.
+ * @summary Update agent profile identity
+ */
+export const updateProfile = async (profileUpdateInput: ProfileUpdateInput, options?: RequestInit): Promise<ProfileResponse> => {
+
+  return customFetch<ProfileResponse>(getUpdateProfileUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      profileUpdateInput,)
+  }
+);}
+
+
+
+
+export const getUpdateProfileMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateProfile>>, TError,{data: BodyType<ProfileUpdateInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateProfile>>, TError,{data: BodyType<ProfileUpdateInput>}, TContext> => {
+
+const mutationKey = ['updateProfile'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateProfile>>, {data: BodyType<ProfileUpdateInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateProfile(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateProfileMutationResult = NonNullable<Awaited<ReturnType<typeof updateProfile>>>
+    export type UpdateProfileMutationBody = BodyType<ProfileUpdateInput>
+    export type UpdateProfileMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Update agent profile identity
+ */
+export const useUpdateProfile = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateProfile>>, TError,{data: BodyType<ProfileUpdateInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateProfile>>,
+        TError,
+        {data: BodyType<ProfileUpdateInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateProfileMutationOptions(options));
+    }
+
+export const getSeedProfileUrl = () => {
+
+
+
+
+  return `/api/activegraph/profile/seed`
+}
+
+/**
+ * Creates the seeded default agent profile when none exists yet. Idempotent — returns the existing profile if one is already present.
+ * @summary Seed the default agent profile
+ */
+export const seedProfile = async ( options?: RequestInit): Promise<ProfileResponse> => {
+
+  return customFetch<ProfileResponse>(getSeedProfileUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getSeedProfileMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof seedProfile>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof seedProfile>>, TError,void, TContext> => {
+
+const mutationKey = ['seedProfile'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof seedProfile>>, void> = () => {
+
+
+          return  seedProfile(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SeedProfileMutationResult = NonNullable<Awaited<ReturnType<typeof seedProfile>>>
+
+    export type SeedProfileMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Seed the default agent profile
+ */
+export const useSeedProfile = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof seedProfile>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof seedProfile>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getSeedProfileMutationOptions(options));
+    }
+
+export const getUpdatePersonalityUrl = () => {
+
+
+
+
+  return `/api/activegraph/profile/personality`
+}
+
+/**
+ * Upserts the global personality profile (tone, verbosity, formality) for the active agent profile.
+ * @summary Update personality profile
+ */
+export const updatePersonality = async (personalityInput: PersonalityInput, options?: RequestInit): Promise<ProfileResponse> => {
+
+  return customFetch<ProfileResponse>(getUpdatePersonalityUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      personalityInput,)
+  }
+);}
+
+
+
+
+export const getUpdatePersonalityMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePersonality>>, TError,{data: BodyType<PersonalityInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updatePersonality>>, TError,{data: BodyType<PersonalityInput>}, TContext> => {
+
+const mutationKey = ['updatePersonality'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updatePersonality>>, {data: BodyType<PersonalityInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updatePersonality(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdatePersonalityMutationResult = NonNullable<Awaited<ReturnType<typeof updatePersonality>>>
+    export type UpdatePersonalityMutationBody = BodyType<PersonalityInput>
+    export type UpdatePersonalityMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Update personality profile
+ */
+export const useUpdatePersonality = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePersonality>>, TError,{data: BodyType<PersonalityInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updatePersonality>>,
+        TError,
+        {data: BodyType<PersonalityInput>},
+        TContext
+      > => {
+      return useMutation(getUpdatePersonalityMutationOptions(options));
+    }
+
+export const getSaveGoalUrl = () => {
+
+
+
+
+  return `/api/activegraph/profile/goal`
+}
+
+/**
+ * Creates a new goal, or updates an existing one when an id is supplied.
+ * @summary Create or update a goal
+ */
+export const saveGoal = async (goalInput: GoalInput, options?: RequestInit): Promise<ProfileResponse> => {
+
+  return customFetch<ProfileResponse>(getSaveGoalUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      goalInput,)
+  }
+);}
+
+
+
+
+export const getSaveGoalMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveGoal>>, TError,{data: BodyType<GoalInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof saveGoal>>, TError,{data: BodyType<GoalInput>}, TContext> => {
+
+const mutationKey = ['saveGoal'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveGoal>>, {data: BodyType<GoalInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveGoal(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveGoalMutationResult = NonNullable<Awaited<ReturnType<typeof saveGoal>>>
+    export type SaveGoalMutationBody = BodyType<GoalInput>
+    export type SaveGoalMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Create or update a goal
+ */
+export const useSaveGoal = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveGoal>>, TError,{data: BodyType<GoalInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof saveGoal>>,
+        TError,
+        {data: BodyType<GoalInput>},
+        TContext
+      > => {
+      return useMutation(getSaveGoalMutationOptions(options));
+    }
+
+export const getDeleteGoalUrl = () => {
+
+
+
+
+  return `/api/activegraph/profile/goal/delete`
+}
+
+/**
+ * Removes a goal from the graph by id.
+ * @summary Delete a goal
+ */
+export const deleteGoal = async (deleteInput: DeleteInput, options?: RequestInit): Promise<ProfileResponse> => {
+
+  return customFetch<ProfileResponse>(getDeleteGoalUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      deleteInput,)
+  }
+);}
+
+
+
+
+export const getDeleteGoalMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteGoal>>, TError,{data: BodyType<DeleteInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteGoal>>, TError,{data: BodyType<DeleteInput>}, TContext> => {
+
+const mutationKey = ['deleteGoal'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteGoal>>, {data: BodyType<DeleteInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  deleteGoal(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteGoalMutationResult = NonNullable<Awaited<ReturnType<typeof deleteGoal>>>
+    export type DeleteGoalMutationBody = BodyType<DeleteInput>
+    export type DeleteGoalMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Delete a goal
+ */
+export const useDeleteGoal = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteGoal>>, TError,{data: BodyType<DeleteInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteGoal>>,
+        TError,
+        {data: BodyType<DeleteInput>},
+        TContext
+      > => {
+      return useMutation(getDeleteGoalMutationOptions(options));
+    }
+
+export const getSaveInstructionUrl = () => {
+
+
+
+
+  return `/api/activegraph/profile/instruction`
+}
+
+/**
+ * Creates a new standing instruction, or updates an existing one when an id is supplied.
+ * @summary Create or update a standing instruction
+ */
+export const saveInstruction = async (instructionInput: InstructionInput, options?: RequestInit): Promise<ProfileResponse> => {
+
+  return customFetch<ProfileResponse>(getSaveInstructionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      instructionInput,)
+  }
+);}
+
+
+
+
+export const getSaveInstructionMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveInstruction>>, TError,{data: BodyType<InstructionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof saveInstruction>>, TError,{data: BodyType<InstructionInput>}, TContext> => {
+
+const mutationKey = ['saveInstruction'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveInstruction>>, {data: BodyType<InstructionInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveInstruction(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveInstructionMutationResult = NonNullable<Awaited<ReturnType<typeof saveInstruction>>>
+    export type SaveInstructionMutationBody = BodyType<InstructionInput>
+    export type SaveInstructionMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Create or update a standing instruction
+ */
+export const useSaveInstruction = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveInstruction>>, TError,{data: BodyType<InstructionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof saveInstruction>>,
+        TError,
+        {data: BodyType<InstructionInput>},
+        TContext
+      > => {
+      return useMutation(getSaveInstructionMutationOptions(options));
+    }
+
+export const getDeleteInstructionUrl = () => {
+
+
+
+
+  return `/api/activegraph/profile/instruction/delete`
+}
+
+/**
+ * Removes a standing instruction from the graph by id.
+ * @summary Delete a standing instruction
+ */
+export const deleteInstruction = async (deleteInput: DeleteInput, options?: RequestInit): Promise<ProfileResponse> => {
+
+  return customFetch<ProfileResponse>(getDeleteInstructionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      deleteInput,)
+  }
+);}
+
+
+
+
+export const getDeleteInstructionMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteInstruction>>, TError,{data: BodyType<DeleteInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteInstruction>>, TError,{data: BodyType<DeleteInput>}, TContext> => {
+
+const mutationKey = ['deleteInstruction'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteInstruction>>, {data: BodyType<DeleteInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  deleteInstruction(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteInstructionMutationResult = NonNullable<Awaited<ReturnType<typeof deleteInstruction>>>
+    export type DeleteInstructionMutationBody = BodyType<DeleteInput>
+    export type DeleteInstructionMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Delete a standing instruction
+ */
+export const useDeleteInstruction = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteInstruction>>, TError,{data: BodyType<DeleteInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteInstruction>>,
+        TError,
+        {data: BodyType<DeleteInput>},
+        TContext
+      > => {
+      return useMutation(getDeleteInstructionMutationOptions(options));
     }
 

@@ -60,10 +60,18 @@ router.get("/activegraph/summary", (req, res) => proxyGet(req, res, "/summary"))
 
 router.get("/activegraph/chat/config", (req, res) => proxyGet(req, res, "/chat/config"));
 router.get("/activegraph/secrets", (req, res) => proxyGet(req, res, "/secrets"));
+router.get("/activegraph/profile", (req, res) => proxyGet(req, res, "/profile"));
 
 router.post("/activegraph/chat", (req, res) => proxyPost(req, res, "/chat"));
 router.post("/activegraph/reset", (req, res) => proxyPost(req, res, "/reset"));
 router.post("/activegraph/chat/config", (req, res) => proxyPost(req, res, "/chat/config"));
 router.post("/activegraph/secrets", (req, res) => proxyPost(req, res, "/secrets"));
+router.post("/activegraph/profile", (req, res) => proxyPost(req, res, "/profile"));
+router.post("/activegraph/profile/seed", (req, res) => proxyPost(req, res, "/profile/seed"));
+router.post("/activegraph/profile/personality", (req, res) => proxyPost(req, res, "/profile/personality"));
+router.post("/activegraph/profile/goal", (req, res) => proxyPost(req, res, "/profile/goal"));
+router.post("/activegraph/profile/goal/delete", (req, res) => proxyPost(req, res, "/profile/goal/delete"));
+router.post("/activegraph/profile/instruction", (req, res) => proxyPost(req, res, "/profile/instruction"));
+router.post("/activegraph/profile/instruction/delete", (req, res) => proxyPost(req, res, "/profile/instruction/delete"));
 
 export default router;

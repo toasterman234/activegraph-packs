@@ -227,6 +227,107 @@ export interface SecretInput {
   provider_hint?: string | null;
 }
 
+export interface ProfileInfo {
+  id: string;
+  name: string;
+  mission?: string;
+  personality_description?: string;
+  /** @nullable */
+  owner_name?: string | null;
+  version?: string;
+  active?: boolean;
+}
+
+export interface PersonalityInfo {
+  /** @nullable */
+  id?: string | null;
+  tone: string;
+  verbosity: string;
+  formality: string;
+}
+
+export interface GoalInfo {
+  id: string;
+  text: string;
+  priority?: string;
+  status?: string;
+  /** @nullable */
+  domain?: string | null;
+}
+
+export interface InstructionInfo {
+  id: string;
+  text: string;
+  scope?: string;
+  priority?: number;
+  active?: boolean;
+  /** @nullable */
+  applies_to_channel?: string | null;
+  /** @nullable */
+  applies_to_audience_role?: string | null;
+}
+
+export interface ProfileResponse {
+  exists: boolean;
+  profile?: ProfileInfo;
+  personality?: PersonalityInfo;
+  goals: GoalInfo[];
+  instructions: InstructionInfo[];
+}
+
+export interface ProfileUpdateInput {
+  name?: string;
+  mission?: string;
+  personality_description?: string;
+  /** @nullable */
+  owner_name?: string | null;
+}
+
+export interface PersonalityInput {
+  /** neutral, warm, direct, formal, casual, technical */
+  tone: string;
+  /** concise, balanced, detailed */
+  verbosity: string;
+  /** informal, neutral, formal */
+  formality: string;
+}
+
+export interface GoalInput {
+  /**
+     * Goal id to update; omit to create
+     * @nullable
+     */
+  id?: string | null;
+  text: string;
+  /** low, medium, high, critical */
+  priority?: string;
+  /** active, paused, completed, cancelled */
+  status?: string;
+  /** @nullable */
+  domain?: string | null;
+}
+
+export interface InstructionInput {
+  /**
+     * Instruction id to update; omit to create
+     * @nullable
+     */
+  id?: string | null;
+  text: string;
+  scope?: string;
+  /** 0-100, higher assembled first */
+  priority?: number;
+  active?: boolean;
+  /** @nullable */
+  applies_to_channel?: string | null;
+  /** @nullable */
+  applies_to_audience_role?: string | null;
+}
+
+export interface DeleteInput {
+  id: string;
+}
+
 export type GetTraceParams = {
 limit?: number;
 offset?: number;

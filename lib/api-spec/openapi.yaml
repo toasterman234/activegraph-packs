@@ -225,6 +225,152 @@ paths:
               schema:
                 $ref: "#/components/schemas/SecretsResponse"
 
+  /activegraph/profile:
+    get:
+      operationId: getProfile
+      tags: [activegraph]
+      summary: Get agent profile
+      description: Returns the active agent profile with its personality, goals, and standing instructions. exists=false when no profile has been created yet.
+      responses:
+        "200":
+          description: Agent profile view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileResponse"
+    post:
+      operationId: updateProfile
+      tags: [activegraph]
+      summary: Update agent profile identity
+      description: Updates the active agent profile's name, mission, personality description, and owner name.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileUpdateInput"
+      responses:
+        "200":
+          description: Updated profile view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileResponse"
+
+  /activegraph/profile/seed:
+    post:
+      operationId: seedProfile
+      tags: [activegraph]
+      summary: Seed the default agent profile
+      description: Creates the seeded default agent profile when none exists yet. Idempotent — returns the existing profile if one is already present.
+      responses:
+        "200":
+          description: Profile view after seeding
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileResponse"
+
+  /activegraph/profile/personality:
+    post:
+      operationId: updatePersonality
+      tags: [activegraph]
+      summary: Update personality profile
+      description: Upserts the global personality profile (tone, verbosity, formality) for the active agent profile.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonalityInput"
+      responses:
+        "200":
+          description: Updated profile view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileResponse"
+
+  /activegraph/profile/goal:
+    post:
+      operationId: saveGoal
+      tags: [activegraph]
+      summary: Create or update a goal
+      description: Creates a new goal, or updates an existing one when an id is supplied.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GoalInput"
+      responses:
+        "200":
+          description: Updated profile view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileResponse"
+
+  /activegraph/profile/goal/delete:
+    post:
+      operationId: deleteGoal
+      tags: [activegraph]
+      summary: Delete a goal
+      description: Removes a goal from the graph by id.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteInput"
+      responses:
+        "200":
+          description: Updated profile view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileResponse"
+
+  /activegraph/profile/instruction:
+    post:
+      operationId: saveInstruction
+      tags: [activegraph]
+      summary: Create or update a standing instruction
+      description: Creates a new standing instruction, or updates an existing one when an id is supplied.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InstructionInput"
+      responses:
+        "200":
+          description: Updated profile view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileResponse"
+
+  /activegraph/profile/instruction/delete:
+    post:
+      operationId: deleteInstruction
+      tags: [activegraph]
+      summary: Delete a standing instruction
+      description: Removes a standing instruction from the graph by id.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteInput"
+      responses:
+        "200":
+          description: Updated profile view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -498,3 +644,106 @@ components:
         name:          { type: string, description: "Credential / env var name, e.g. OPENAI_API_KEY" }
         value:         { type: string, description: "Secret value — used in-process only, never persisted" }
         provider_hint: { type: ["string", "null"] }
+
+    # ── Agent profile ──────────────────────────────────────────────────────────
+
+    ProfileInfo:
+      type: object
+      required: [id, name]
+      properties:
+        id:      { type: string }
+        name:    { type: string }
+        mission: { type: string }
+        personality_description: { type: string }
+        owner_name: { type: ["string", "null"] }
+        version: { type: string }
+        active:  { type: boolean }
+
+    PersonalityInfo:
+      type: object
+      required: [tone, verbosity, formality]
+      properties:
+        id:        { type: ["string", "null"] }
+        tone:      { type: string }
+        verbosity: { type: string }
+        formality: { type: string }
+
+    GoalInfo:
+      type: object
+      required: [id, text]
+      properties:
+        id:       { type: string }
+        text:     { type: string }
+        priority: { type: string }
+        status:   { type: string }
+        domain:   { type: ["string", "null"] }
+
+    InstructionInfo:
+      type: object
+      required: [id, text]
+      properties:
+        id:       { type: string }
+        text:     { type: string }
+        scope:    { type: string }
+        priority: { type: integer }
+        active:   { type: boolean }
+        applies_to_channel:      { type: ["string", "null"] }
+        applies_to_audience_role: { type: ["string", "null"] }
+
+    ProfileResponse:
+      type: object
+      required: [exists, goals, instructions]
+      properties:
+        exists:      { type: boolean }
+        profile:     { $ref: "#/components/schemas/ProfileInfo" }
+        personality: { $ref: "#/components/schemas/PersonalityInfo" }
+        goals:
+          type: array
+          items: { $ref: "#/components/schemas/GoalInfo" }
+        instructions:
+          type: array
+          items: { $ref: "#/components/schemas/InstructionInfo" }
+
+    ProfileUpdateInput:
+      type: object
+      properties:
+        name:    { type: string }
+        mission: { type: string }
+        personality_description: { type: string }
+        owner_name: { type: ["string", "null"] }
+
+    PersonalityInput:
+      type: object
+      required: [tone, verbosity, formality]
+      properties:
+        tone:      { type: string, description: "neutral, warm, direct, formal, casual, technical" }
+        verbosity: { type: string, description: "concise, balanced, detailed" }
+        formality: { type: string, description: "informal, neutral, formal" }
+
+    GoalInput:
+      type: object
+      required: [text]
+      properties:
+        id:       { type: ["string", "null"], description: "Goal id to update; omit to create" }
+        text:     { type: string }
+        priority: { type: string, description: "low, medium, high, critical" }
+        status:   { type: string, description: "active, paused, completed, cancelled" }
+        domain:   { type: ["string", "null"] }
+
+    InstructionInput:
+      type: object
+      required: [text]
+      properties:
+        id:       { type: ["string", "null"], description: "Instruction id to update; omit to create" }
+        text:     { type: string }
+        scope:    { type: string }
+        priority: { type: integer, description: "0-100, higher assembled first" }
+        active:   { type: boolean }
+        applies_to_channel:      { type: ["string", "null"] }
+        applies_to_audience_role: { type: ["string", "null"] }
+
+    DeleteInput:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }

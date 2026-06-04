@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { Activity, Box, ListTree, Package, LayoutDashboard, MessageSquare, KeyRound, Menu } from "lucide-react";
+import { Activity, Box, ListTree, Package, LayoutDashboard, MessageSquare, KeyRound, UserCog, Menu } from "lucide-react";
 import { useHealthCheck } from "@workspace/api-client-react";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 
@@ -12,6 +12,7 @@ const navItems = [
   { href: "/frames", label: "Frames", icon: ListTree },
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/secrets", label: "Secrets", icon: KeyRound },
+  { href: "/identity", label: "Identity", icon: UserCog },
 ];
 
 function NavLinks({ onNavigate }: { onNavigate?: () => void }) {

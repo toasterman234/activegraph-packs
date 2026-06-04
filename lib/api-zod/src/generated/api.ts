@@ -303,3 +303,362 @@ export const SetSecretResponse = zod.object({
 })
 
 
+/**
+ * Returns the active agent profile with its personality, goals, and standing instructions. exists=false when no profile has been created yet.
+ * @summary Get agent profile
+ */
+export const GetProfileResponse = zod.object({
+  "exists": zod.boolean(),
+  "profile": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "mission": zod.string().optional(),
+  "personality_description": zod.string().optional(),
+  "owner_name": zod.string().nullish(),
+  "version": zod.string().optional(),
+  "active": zod.boolean().optional()
+}).optional(),
+  "personality": zod.object({
+  "id": zod.string().nullish(),
+  "tone": zod.string(),
+  "verbosity": zod.string(),
+  "formality": zod.string()
+}).optional(),
+  "goals": zod.array(zod.object({
+  "id": zod.string(),
+  "text": zod.string(),
+  "priority": zod.string().optional(),
+  "status": zod.string().optional(),
+  "domain": zod.string().nullish()
+})),
+  "instructions": zod.array(zod.object({
+  "id": zod.string(),
+  "text": zod.string(),
+  "scope": zod.string().optional(),
+  "priority": zod.number().optional(),
+  "active": zod.boolean().optional(),
+  "applies_to_channel": zod.string().nullish(),
+  "applies_to_audience_role": zod.string().nullish()
+}))
+})
+
+
+/**
+ * Updates the active agent profile's name, mission, personality description, and owner name.
+ * @summary Update agent profile identity
+ */
+export const UpdateProfileBody = zod.object({
+  "name": zod.string().optional(),
+  "mission": zod.string().optional(),
+  "personality_description": zod.string().optional(),
+  "owner_name": zod.string().nullish()
+})
+
+export const UpdateProfileResponse = zod.object({
+  "exists": zod.boolean(),
+  "profile": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "mission": zod.string().optional(),
+  "personality_description": zod.string().optional(),
+  "owner_name": zod.string().nullish(),
+  "version": zod.string().optional(),
+  "active": zod.boolean().optional()
+}).optional(),
+  "personality": zod.object({
+  "id": zod.string().nullish(),
+  "tone": zod.string(),
+  "verbosity": zod.string(),
+  "formality": zod.string()
+}).optional(),
+  "goals": zod.array(zod.object({
+  "id": zod.string(),
+  "text": zod.string(),
+  "priority": zod.string().optional(),
+  "status": zod.string().optional(),
+  "domain": zod.string().nullish()
+})),
+  "instructions": zod.array(zod.object({
+  "id": zod.string(),
+  "text": zod.string(),
+  "scope": zod.string().optional(),
+  "priority": zod.number().optional(),
+  "active": zod.boolean().optional(),
+  "applies_to_channel": zod.string().nullish(),
+  "applies_to_audience_role": zod.string().nullish()
+}))
+})
+
+
+/**
+ * Creates the seeded default agent profile when none exists yet. Idempotent — returns the existing profile if one is already present.
+ * @summary Seed the default agent profile
+ */
+export const SeedProfileResponse = zod.object({
+  "exists": zod.boolean(),
+  "profile": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "mission": zod.string().optional(),
+  "personality_description": zod.string().optional(),
+  "owner_name": zod.string().nullish(),
+  "version": zod.string().optional(),
+  "active": zod.boolean().optional()
+}).optional(),
+  "personality": zod.object({
+  "id": zod.string().nullish(),
+  "tone": zod.string(),
+  "verbosity": zod.string(),
+  "formality": zod.string()
+}).optional(),
+  "goals": zod.array(zod.object({
+  "id": zod.string(),
+  "text": zod.string(),
+  "priority": zod.string().optional(),
+  "status": zod.string().optional(),
+  "domain": zod.string().nullish()
+})),
+  "instructions": zod.array(zod.object({
+  "id": zod.string(),
+  "text": zod.string(),
+  "scope": zod.string().optional(),
+  "priority": zod.number().optional(),
+  "active": zod.boolean().optional(),
+  "applies_to_channel": zod.string().nullish(),
+  "applies_to_audience_role": zod.string().nullish()
+}))
+})
+
+
+/**
+ * Upserts the global personality profile (tone, verbosity, formality) for the active agent profile.
+ * @summary Update personality profile
+ */
+export const UpdatePersonalityBody = zod.object({
+  "tone": zod.string().describe('neutral, warm, direct, formal, casual, technical'),
+  "verbosity": zod.string().describe('concise, balanced, detailed'),
+  "formality": zod.string().describe('informal, neutral, formal')
+})
+
+export const UpdatePersonalityResponse = zod.object({
+  "exists": zod.boolean(),
+  "profile": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "mission": zod.string().optional(),
+  "personality_description": zod.string().optional(),
+  "owner_name": zod.string().nullish(),
+  "version": zod.string().optional(),
+  "active": zod.boolean().optional()
+}).optional(),
+  "personality": zod.object({
+  "id": zod.string().nullish(),
+  "tone": zod.string(),
+  "verbosity": zod.string(),
+  "formality": zod.string()
+}).optional(),
+  "goals": zod.array(zod.object({
+  "id": zod.string(),
+  "text": zod.string(),
+  "priority": zod.string().optional(),
+  "status": zod.string().optional(),
+  "domain": zod.string().nullish()
+})),
+  "instructions": zod.array(zod.object({
+  "id": zod.string(),
+  "text": zod.string(),
+  "scope": zod.string().optional(),
+  "priority": zod.number().optional(),
+  "active": zod.boolean().optional(),
+  "applies_to_channel": zod.string().nullish(),
+  "applies_to_audience_role": zod.string().nullish()
+}))
+})
+
+
+/**
+ * Creates a new goal, or updates an existing one when an id is supplied.
+ * @summary Create or update a goal
+ */
+export const SaveGoalBody = zod.object({
+  "id": zod.string().nullish().describe('Goal id to update; omit to create'),
+  "text": zod.string(),
+  "priority": zod.string().optional().describe('low, medium, high, critical'),
+  "status": zod.string().optional().describe('active, paused, completed, cancelled'),
+  "domain": zod.string().nullish()
+})
+
+export const SaveGoalResponse = zod.object({
+  "exists": zod.boolean(),
+  "profile": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "mission": zod.string().optional(),
+  "personality_description": zod.string().optional(),
+  "owner_name": zod.string().nullish(),
+  "version": zod.string().optional(),
+  "active": zod.boolean().optional()
+}).optional(),
+  "personality": zod.object({
+  "id": zod.string().nullish(),
+  "tone": zod.string(),
+  "verbosity": zod.string(),
+  "formality": zod.string()
+}).optional(),
+  "goals": zod.array(zod.object({
+  "id": zod.string(),
+  "text": zod.string(),
+  "priority": zod.string().optional(),
+  "status": zod.string().optional(),
+  "domain": zod.string().nullish()
+})),
+  "instructions": zod.array(zod.object({
+  "id": zod.string(),
+  "text": zod.string(),
+  "scope": zod.string().optional(),
+  "priority": zod.number().optional(),
+  "active": zod.boolean().optional(),
+  "applies_to_channel": zod.string().nullish(),
+  "applies_to_audience_role": zod.string().nullish()
+}))
+})
+
+
+/**
+ * Removes a goal from the graph by id.
+ * @summary Delete a goal
+ */
+export const DeleteGoalBody = zod.object({
+  "id": zod.string()
+})
+
+export const DeleteGoalResponse = zod.object({
+  "exists": zod.boolean(),
+  "profile": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "mission": zod.string().optional(),
+  "personality_description": zod.string().optional(),
+  "owner_name": zod.string().nullish(),
+  "version": zod.string().optional(),
+  "active": zod.boolean().optional()
+}).optional(),
+  "personality": zod.object({
+  "id": zod.string().nullish(),
+  "tone": zod.string(),
+  "verbosity": zod.string(),
+  "formality": zod.string()
+}).optional(),
+  "goals": zod.array(zod.object({
+  "id": zod.string(),
+  "text": zod.string(),
+  "priority": zod.string().optional(),
+  "status": zod.string().optional(),
+  "domain": zod.string().nullish()
+})),
+  "instructions": zod.array(zod.object({
+  "id": zod.string(),
+  "text": zod.string(),
+  "scope": zod.string().optional(),
+  "priority": zod.number().optional(),
+  "active": zod.boolean().optional(),
+  "applies_to_channel": zod.string().nullish(),
+  "applies_to_audience_role": zod.string().nullish()
+}))
+})
+
+
+/**
+ * Creates a new standing instruction, or updates an existing one when an id is supplied.
+ * @summary Create or update a standing instruction
+ */
+export const SaveInstructionBody = zod.object({
+  "id": zod.string().nullish().describe('Instruction id to update; omit to create'),
+  "text": zod.string(),
+  "scope": zod.string().optional(),
+  "priority": zod.number().optional().describe('0-100, higher assembled first'),
+  "active": zod.boolean().optional(),
+  "applies_to_channel": zod.string().nullish(),
+  "applies_to_audience_role": zod.string().nullish()
+})
+
+export const SaveInstructionResponse = zod.object({
+  "exists": zod.boolean(),
+  "profile": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "mission": zod.string().optional(),
+  "personality_description": zod.string().optional(),
+  "owner_name": zod.string().nullish(),
+  "version": zod.string().optional(),
+  "active": zod.boolean().optional()
+}).optional(),
+  "personality": zod.object({
+  "id": zod.string().nullish(),
+  "tone": zod.string(),
+  "verbosity": zod.string(),
+  "formality": zod.string()
+}).optional(),
+  "goals": zod.array(zod.object({
+  "id": zod.string(),
+  "text": zod.string(),
+  "priority": zod.string().optional(),
+  "status": zod.string().optional(),
+  "domain": zod.string().nullish()
+})),
+  "instructions": zod.array(zod.object({
+  "id": zod.string(),
+  "text": zod.string(),
+  "scope": zod.string().optional(),
+  "priority": zod.number().optional(),
+  "active": zod.boolean().optional(),
+  "applies_to_channel": zod.string().nullish(),
+  "applies_to_audience_role": zod.string().nullish()
+}))
+})
+
+
+/**
+ * Removes a standing instruction from the graph by id.
+ * @summary Delete a standing instruction
+ */
+export const DeleteInstructionBody = zod.object({
+  "id": zod.string()
+})
+
+export const DeleteInstructionResponse = zod.object({
+  "exists": zod.boolean(),
+  "profile": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "mission": zod.string().optional(),
+  "personality_description": zod.string().optional(),
+  "owner_name": zod.string().nullish(),
+  "version": zod.string().optional(),
+  "active": zod.boolean().optional()
+}).optional(),
+  "personality": zod.object({
+  "id": zod.string().nullish(),
+  "tone": zod.string(),
+  "verbosity": zod.string(),
+  "formality": zod.string()
+}).optional(),
+  "goals": zod.array(zod.object({
+  "id": zod.string(),
+  "text": zod.string(),
+  "priority": zod.string().optional(),
+  "status": zod.string().optional(),
+  "domain": zod.string().nullish()
+})),
+  "instructions": zod.array(zod.object({
+  "id": zod.string(),
+  "text": zod.string(),
+  "scope": zod.string().optional(),
+  "priority": zod.number().optional(),
+  "active": zod.boolean().optional(),
+  "applies_to_channel": zod.string().nullish(),
+  "applies_to_audience_role": zod.string().nullish()
+}))
+})
+
+
