@@ -1,41 +1,88 @@
 # ActiveGraph Packs
 
-A modular, open-source collection of ActiveGraph packs for building auditable, event-sourced assistants.
+A modular, open-source collection of ActiveGraph packs for building auditable,
+event-sourced assistants. This directory is the heart of the repo — a **reference
+showcase for how packs should be built and layered**.
 
 ## What is a Pack?
 
-A pack is a bundle of object types, behaviors, tools, prompts, and policies for a specific domain. Packs compose through shared graph state — behaviors emit events that trigger other behaviors, with no direct inter-pack function calls.
+A pack is a self-contained bundle of object types, relations, behaviors, tools,
+prompts, settings, fixtures, and docs for one area of responsibility. Packs compose
+through shared graph state — a behavior emits an object, that write is an event,
+and the event triggers a behavior in another pack. There are **no direct inter-pack
+function calls and no central coordinator**.
+
+For the full mental model, read **[docs/concepts.md](../docs/concepts.md)**.
+
+## Core vs. Layered Packs
+
+Every pack here is one of two kinds:
+
+- **Core Pack** (`core`) — the universal substrate. Seven object types and seven
+  relation types that every other pack speaks. It depends on nothing and stays
+  deliberately minimal (no people, companies, claims, or documents — those belong
+  to layered packs).
+- **Layered packs** — everything else. Each builds on Core via `requires = ["core"]`
+  and optionally cooperates with other packs via `integrates_with`. Layered packs
+  bridge their domain outputs back to Core primitives so the rest of the system can
+  treat them uniformly.
 
 ## Pack Index
 
-| Pack | Status | Description |
-|------|--------|-------------|
-| [`core`](core/) | ✅ v0.1 | Universal primitives: source, observation, task, action, artifact, memory_candidate, evaluation |
-| [`tool_gateway`](tool_gateway/) | 🚧 planned | Normalizes, authorizes, and records all external capability calls |
-| [`secrets`](secrets/) | 🚧 planned | Credential references, scopes, and runtime injection (secrets never enter model context) |
-| [`memory_gateway`](memory_gateway/) | 🚧 planned | Memory candidate acceptance, item storage, retrieval, and ranking |
-| [`agent_profile`](agent_profile/) | 🚧 planned | Agent goals, personality, standing instructions, owner preferences |
-| [`identity_auth`](identity_auth/) | 🚧 planned | Principal resolution, roles, permissions, auth context |
-| [`entity`](entity/) | 🚧 planned | Canonical people, organizations, projects with dedupe and merge |
-| [`communication`](communication/) | 🚧 planned | Channel-neutral thread/message/intent/response primitives |
-| [`chat`](chat/) | 🚧 planned | Chat adapter — translates chat input into comm_message |
-| [`email`](email/) | 🚧 planned | Email adapter — ingest, draft, and approval-gated send |
-| [`research`](research/) | 🚧 planned | Paper, method, idea atom, hypothesis, experiment tracking |
-| [`vc`](vc/) | 🚧 planned | Founder relationships, deal tracking, investment memos |
-| [`codebase`](codebase/) | 🚧 planned | Repo, file, issue, PR, architecture decision tracking |
-| [`team_ops`](team_ops/) | 🚧 planned | Projects, assignments, milestones extending Core task |
-| [`meeting`](meeting/) | 🚧 planned | Meeting ingestion, transcript, decisions, action items |
+All packs below are implemented at **v0.1** with deterministic, API-key-free
+fixtures.
+
+### Core
+
+| Pack | Tier | Description |
+|------|------|-------------|
+| [`core`](core/) | core | Universal primitives: source, observation, task, action, artifact, memory_candidate, evaluation |
+
+### Infrastructure (cross-cutting capabilities)
+
+| Pack | Requires | Description |
+|------|----------|-------------|
+| [`tool_gateway`](tool_gateway/) | core | Normalizes, authorizes, and records all external capability calls |
+| [`secrets`](secrets/) | core | Credential references, scopes, runtime injection (secrets never enter model context) |
+| [`memory_gateway`](memory_gateway/) | core | Memory candidate acceptance, item storage, retrieval, and ranking |
+| [`identity_auth`](identity_auth/) | core | Principal resolution, roles, permissions, auth context |
+| [`agent_profile`](agent_profile/) | core | Agent goals, personality, standing instructions, owner preferences |
+| [`entity`](entity/) | core | Canonical people, organizations, projects with dedupe and merge |
+
+### Communication
+
+| Pack | Requires | Description |
+|------|----------|-------------|
+| [`communication`](communication/) | core | Channel-neutral thread/message/intent/response primitives |
+| [`chat`](chat/) | core, communication | Chat adapter — translates chat input into comm_message |
+| [`email`](email/) | core, communication | Email adapter — ingest, draft, and approval-gated send |
+
+### Domain (channel-agnostic verticals)
+
+| Pack | Requires | Description |
+|------|----------|-------------|
+| [`research`](research/) | core | Paper, method, idea atom, hypothesis, experiment tracking |
+| [`vc`](vc/) | core, communication | Founder relationships, deal tracking, investment memos |
+| [`codebase`](codebase/) | core | Repo, file, issue, PR, architecture decision tracking |
+| [`team_ops`](team_ops/) | core | Projects, assignments, milestones extending Core task |
+| [`meeting`](meeting/) | core | Meeting ingestion, transcript, decisions, action items |
+
+### Bridge
+
+| Pack | Requires | Description |
+|------|----------|-------------|
+| [`bridges`](bridges/) | core | `diligence_core_bridge` — zero-ontology pack mapping the bundled ActiveGraph Diligence pack's outputs onto Core types |
 
 ## Pack Dependency Graph
 
 ```
 kernel (activegraph runtime)
-└── core                          # Universal primitives
+└── core                          # Universal primitives — requires nothing
     ├── tool_gateway              # Capability execution
     ├── secrets                   # Credential management
     ├── memory_gateway            # Memory lifecycle
-    ├── agent_profile             # Agent identity
     ├── identity_auth             # Principal resolution
+    ├── agent_profile             # Agent identity
     ├── entity                    # Entity deduplication
     ├── communication             # Channel-neutral messaging
     │   ├── chat                  # Chat adapter
@@ -54,10 +101,10 @@ packs/<pack_name>/
   __init__.py          # Exports `pack` and `<Name>Settings`
   object_types.py      # Pydantic schemas + ObjectType/RelationType lists
   behaviors.py         # @behavior, @llm_behavior decorators
-  tools.py             # @tool decorated functions
+  tools.py             # @tool decorated functions (may be empty)
   settings.py          # Pydantic settings (all fields have defaults)
-  prompts/             # .md files with TOML frontmatter
-  fixtures/            # .yaml/.json scenario fixtures
+  prompts/             # .md files with TOML frontmatter (LLM behaviors only)
+  fixtures/            # .yaml/.json scenario fixtures (run without an API key)
   README.md            # Behavior map, object types, usage examples
   CHANGELOG.md         # Version history starting at v0.1.0
 ```
@@ -67,6 +114,9 @@ Copy `_template/` to start a new pack:
 ```bash
 cp -r packs/_template packs/my_pack
 ```
+
+See **[CONTRIBUTING.md](../CONTRIBUTING.md#adding-a-new-pack)** for the full
+step-by-step build guide and the open-source hygiene checklist.
 
 ## Key Design Rules
 
@@ -78,4 +128,4 @@ cp -r packs/_template packs/my_pack
 6. Every pack must include **fixtures** (demo without API keys)
 7. Every pack must include a **behavior map** in its README
 
-See `replit.md` for the full Core Rules.
+See [`replit.md`](../replit.md) for the full Core Rules and the 10 key invariants.

@@ -8,6 +8,13 @@ out-tsc
 .expo
 .expo-shared
 
+# Python build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.upm/
+
 # dependencies
 node_modules
 
