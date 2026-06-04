@@ -157,6 +157,42 @@ class ChatContext(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class MemoryContext(BaseModel):
+    """Long-term memory recalled for one inbound message.
+
+    chat_memory_context queries the Memory Gateway backend for memories relevant
+    to the inbound message and writes the top matches here, linked to the
+    CommMessage via provides_context_for. Like ChatContext (conversation memory)
+    and ProfileContextView (identity), it rides into the LLM prompt through the
+    responder's depth-1 scoped view — the `summary` text is what the model reads.
+
+    This is the "use" half of long-term memory: ChatContext carries *this*
+    conversation's recent turns; MemoryContext carries durable facts learned in
+    *earlier* sessions, so the assistant remembers across restarts.
+    """
+
+    message_id: str = Field(
+        description="ID of the inbound CommMessage this memory was recalled for."
+    )
+    query: str = Field(default="", description="The text used to query memory.")
+    item_count: int = Field(
+        default=0, description="Number of memories recalled (bounded by memory_top_k)."
+    )
+    item_ids: list[str] = Field(
+        default_factory=list,
+        description="Backend item_ids of the recalled memories (audit trail).",
+    )
+    summary: str = Field(
+        default="",
+        description=(
+            "The recalled memories rendered as plain text, one per line. This is "
+            "what the LLM reads as long-term memory."
+        ),
+    )
+    frame_id: Optional[str] = Field(default=None)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 # ================================================================ ObjectType list
 
 OBJECT_TYPES = [
@@ -193,6 +229,15 @@ OBJECT_TYPES = [
             "chat_llm_responder as the conversation history shown to the LLM."
         ),
     ),
+    ObjectType(
+        name="memory_context",
+        schema=MemoryContext,
+        description=(
+            "Long-term memory recalled for one inbound message. Assembled by "
+            "chat_memory_context from the Memory Gateway backend and read by "
+            "chat_llm_responder as durable cross-session memory shown to the LLM."
+        ),
+    ),
 ]
 
 
@@ -226,13 +271,13 @@ RELATION_TYPES = [
         # Profile type here is a string-only reference — it is validated lazily at
         # add_relation time, so the Chat Pack still loads standalone (without
         # agent_profile), in which case no profile_context_view is ever created.
-        source_types=("chat_context", "profile_context_view"),
+        source_types=("chat_context", "profile_context_view", "memory_context"),
         target_types=("comm_message",),
         description=(
-            "A context object (ChatContext memory or ProfileContextView identity) "
-            "provides context for an inbound CommMessage. This edge lets "
-            "chat_llm_responder's depth-1 view capture the context without "
-            "widening its scope."
+            "A context object (ChatContext conversation memory, MemoryContext "
+            "long-term memory, or ProfileContextView identity) provides context "
+            "for an inbound CommMessage. This edge lets chat_llm_responder's "
+            "depth-1 view capture the context without widening its scope."
         ),
     ),
 ]

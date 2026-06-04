@@ -167,11 +167,17 @@ def _build_runtime():
     from bundles import build_assistant, load_assistant_packs
     from packs.identity_auth.behaviors import rebuild_principal_registry
     from packs.memory_gateway import MemoryGatewaySettings
+    from packs.chat import ChatSettings
 
     from packs.chat.llm import select_chat_provider
 
     db = _db_path()
     mem_settings = MemoryGatewaySettings(backend_url=_memory_db_path())
+    # Long-term memory recall (chat_memory_context) must query the SAME backend
+    # memory_writer persists to, so point ChatSettings.memory_backend_url at the
+    # same SQLite file. This is what makes cross-session recall work: memories
+    # written in one session are retrieved in the next, even across a restart.
+    chat_settings = ChatSettings(memory_backend_url=_memory_db_path())
     resuming = _store_has_run(db)
 
     # Resolve the chat LLM provider from the environment (live if a provider
@@ -186,7 +192,11 @@ def _build_runtime():
 
     if resuming:
         rt = Runtime.load(db, llm_provider=provider)
-        load_assistant_packs(rt, memory_gateway_settings=mem_settings)
+        load_assistant_packs(
+            rt,
+            memory_gateway_settings=mem_settings,
+            chat_settings=chat_settings,
+        )
         # Replay rebuilds graph objects without firing behaviors, so the
         # in-memory principal dedup registry is empty — repopulate it from
         # the replayed principals to avoid creating duplicates on the next
@@ -207,6 +217,7 @@ def _build_runtime():
         rt = build_assistant(
             persist_to=db,
             memory_gateway_settings=mem_settings,
+            chat_settings=chat_settings,
             llm_provider=provider,
         )
         print(f"[demo_server] Fresh run {rt.run_id} persisting to {db}", flush=True)

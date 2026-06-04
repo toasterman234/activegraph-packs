@@ -1,1 +1,2 @@
-- [ActiveGraph context-injection seam](activegraph-context-injection.md) — chat depth-1 view + provides_context_for; assemble context synchronously before responder; rebuild registries on Runtime.load.
+- [ActiveGraph relation arg order](activegraph-quirks.md) — add_relation signature differs per pack (mg vs chat); a known API footgun.
+- [Long-term memory architecture](long-term-memory.md) — write path already worked via Core; real gap was retrieval; seams for embeddings/backend/ingestion.

@@ -1,28 +1,42 @@
-"""Memory Gateway backend — in-memory SQLite implementation.
+"""Memory Gateway backend — SQLite implementation with a pluggable
+embedding seam.
 
-This is the default backend for Memory Gateway Pack v0.1.
-It provides a simple key-value store for MemoryItems backed by SQLite.
+This is the default backend for Memory Gateway Pack. It provides a simple
+store for MemoryItems backed by SQLite, with two retrieval modes:
 
-v0.2 will add:
-- Postgres + pgvector for vector similarity search
-- Mem0 integration
-- Supermemory integration
+  * Lexical (default)  — Jaccard keyword overlap. Zero dependencies, never
+    errors, works out of the box with no API key.
+  * Embedding (opt-in) — cosine similarity over vectors. Activated *only*
+    when an embedder is registered via ``set_embedder`` (or discovered by
+    ``auto_configure_embedder``). With no embedder the backend stays fully
+    lexical and never raises.
+
+The selection is automatic: ``store_item`` embeds an item iff an embedder is
+present, and ``retrieve_by_query`` ranks by cosine iff an embedder is present
+(falling back to lexical for any item without a stored vector, and on any
+embedder error). This is the "trivially pluggable embeddings" seam — see
+``docs/long-term-memory.md`` for wiring an OpenAI/other provider. We never
+bundle a provider as a hard dependency.
 
 The backend interface is minimal:
   store_item(item_id, text, category, confidence, metadata)
-  retrieve_by_query(query, top_k, min_score) → list[dict]
+  retrieve_by_query(query, top_k, min_score, category) → list[dict]
+  find_by_text(text) → Optional[str]   # write-path dedup
   enforce_limit(max_items)
   clear()
 
-All implementations must satisfy this interface.
+External backends (Postgres+pgvector, Mem0, Supermemory, …) implement this
+same interface and are swapped in by pointing ``backend_url`` at a custom
+factory; the docs page covers the integration boundary.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
-from typing import Any, Optional
+from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
 
 # ------------------------------------------------------------------ helpers
@@ -44,6 +58,129 @@ def _jaccard(a: str, b: str) -> float:
     if not wa or not wb:
         return 0.0
     return len(wa & wb) / len(wa | wb)
+
+
+def _normalize_text(text: str) -> str:
+    """Normalize memory text for dedup: lowercase, collapse whitespace, strip
+    trailing punctuation. Two statements that differ only in casing/spacing/
+    final punctuation are treated as the same memory."""
+    return re.sub(r"\s+", " ", text.strip().lower()).rstrip(".!?,;: ")
+
+
+# ------------------------------------------------------------------ embedding seam
+#
+# The embedding seam is the single switch between lexical (default) and
+# embedding-based recall. Keep this dependency-free: we define only the
+# *protocol* and a process-global registry. A real provider (OpenAI, Cohere,
+# a local sentence-transformer, …) is plugged in by the application — never
+# bundled here — so the library stays installable and testable with no API key.
+
+
+@runtime_checkable
+class Embedder(Protocol):
+    """Anything that turns text into vectors. The one method the backend needs.
+
+    Implementations live in the *application*, not in this pack. Example::
+
+        class OpenAIEmbedder:
+            def embed(self, texts: list[str]) -> list[list[float]]:
+                # call your provider, return one vector per input text
+                ...
+
+        from packs.memory_gateway.backend import set_embedder
+        set_embedder(OpenAIEmbedder())   # now recall is embedding-based
+    """
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        ...
+
+
+_embedder: Optional[Embedder] = None
+# Optional factory an application can register so auto_configure_embedder() can
+# lazily build an embedder when a key is present. Left None by default → lexical.
+_embedder_factory: Optional[Callable[[], Optional[Embedder]]] = None
+
+
+def set_embedder(embedder: Optional[Embedder]) -> None:
+    """Register (or clear, with None) the active embedder.
+
+    Once set, store_item embeds new items and retrieve_by_query ranks by cosine
+    automatically. Pass None to fall back to lexical. This is the whole switch."""
+    global _embedder
+    _embedder = embedder
+
+
+def get_embedder() -> Optional[Embedder]:
+    """Return the active embedder, or None when recall is lexical."""
+    return _embedder
+
+
+def clear_embedder() -> None:
+    """Reset to the lexical default. Mainly for tests."""
+    global _embedder
+    _embedder = None
+
+
+def set_embedder_factory(factory: Optional[Callable[[], Optional[Embedder]]]) -> None:
+    """Register a zero-arg factory used by auto_configure_embedder().
+
+    The factory should return an Embedder when the environment is configured
+    (e.g. an API key is present) or None otherwise. It must not raise."""
+    global _embedder_factory
+    _embedder_factory = factory
+
+
+def auto_configure_embedder() -> Optional[Embedder]:
+    """Best-effort, never-raises switch to embedding-based recall.
+
+    Call this once at startup. If an embedder is already set, it wins. Otherwise
+    we try the registered factory (if any). With no factory / no key / any error
+    we stay lexical and return None — the system must never error without a key.
+
+    Applications wire real auto-detection by calling set_embedder_factory(...)
+    with a factory that checks for their provider key. We deliberately do NOT
+    import any provider here so the pack has zero embedding dependencies."""
+    if _embedder is not None:
+        return _embedder
+    if _embedder_factory is None:
+        return None
+    try:
+        emb = _embedder_factory()
+    except Exception:
+        return None
+    if emb is not None:
+        set_embedder(emb)
+    return emb
+
+
+def _safe_embed(texts: list[str]) -> Optional[list[list[float]]]:
+    """Embed texts with the active embedder, swallowing any failure → None.
+
+    Guarantees the lexical path is always reachable: a misbehaving or
+    unconfigured embedder degrades to lexical instead of raising."""
+    emb = get_embedder()
+    if emb is None:
+        return None
+    try:
+        vectors = emb.embed(texts)
+    except Exception:
+        return None
+    if not vectors or len(vectors) != len(texts):
+        return None
+    return vectors
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    # Clamp to [0,1] so scores compose with the lexical [0,1] range and the
+    # shared min_score threshold. Negative cosines (opposite vectors) → 0.
+    return max(0.0, min(1.0, dot / (na * nb)))
 
 
 # ------------------------------------------------------------------ backend
@@ -73,9 +210,16 @@ class SqliteMemoryBackend:
                 metadata TEXT DEFAULT '{}',
                 created_at TEXT,
                 last_retrieved_at TEXT,
-                retrieval_count INTEGER DEFAULT 0
+                retrieval_count INTEGER DEFAULT 0,
+                embedding TEXT
             )
         """)
+        # Migration-safe: a DB file written by an older version has no
+        # `embedding` column. Add it lazily so persisted stores keep working
+        # (and survive the restart that the cross-session fixtures rely on).
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(memory_items)")}
+        if "embedding" not in cols:
+            self._conn.execute("ALTER TABLE memory_items ADD COLUMN embedding TEXT")
         self._conn.commit()
 
     def store_item(
@@ -86,20 +230,44 @@ class SqliteMemoryBackend:
         confidence: float = 0.7,
         metadata: Optional[dict] = None,
     ):
-        """Store a new MemoryItem in the backend."""
+        """Store a new MemoryItem in the backend.
+
+        If an embedder is registered, the item is embedded at write time and the
+        vector persisted alongside it ("behavior-triggered embedding": this runs
+        inside memory_writer). With no embedder the embedding column stays NULL
+        and retrieval is purely lexical."""
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
+
+        vectors = _safe_embed([text])
+        embedding_json = json.dumps(vectors[0]) if vectors else None
 
         self._conn.execute(
             """
             INSERT OR REPLACE INTO memory_items
                 (item_id, text, category, confidence, metadata, created_at,
-                 last_retrieved_at, retrieval_count)
-            VALUES (?, ?, ?, ?, ?, ?, NULL, 0)
+                 last_retrieved_at, retrieval_count, embedding)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, 0, ?)
             """,
-            (item_id, text, category, confidence, json.dumps(metadata or {}), now),
+            (item_id, text, category, confidence, json.dumps(metadata or {}),
+             now, embedding_json),
         )
         self._conn.commit()
+
+    def find_by_text(self, text: str) -> Optional[str]:
+        """Return the item_id of an existing memory whose normalized text matches
+        *text*, or None. Used by the write path to avoid storing the same
+        statement twice when multiple proposers (Core + chat heuristic) fire on
+        the same message."""
+        target = _normalize_text(text)
+        if not target:
+            return None
+        for item_id, existing in self._conn.execute(
+            "SELECT item_id, text FROM memory_items"
+        ):
+            if _normalize_text(existing) == target:
+                return item_id
+        return None
 
     def retrieve_by_query(
         self,
@@ -108,22 +276,42 @@ class SqliteMemoryBackend:
         min_score: float = 0.2,
         category: Optional[str] = None,
     ) -> list[dict[str, Any]]:
-        """Retrieve MemoryItems ranked by keyword overlap with query.
+        """Retrieve MemoryItems ranked by similarity to *query*.
+
+        Ranking mode is selected automatically: cosine similarity over stored
+        vectors when an embedder is registered, lexical Jaccard otherwise. The
+        two modes are kept on the same [0,1] scale so a single min_score works
+        for both. Lexical is the per-item fallback for any item lacking a vector
+        and for the whole query if embedding the query fails — recall never
+        errors just because embeddings are misconfigured.
 
         Returns a list of dicts with: item_id, text, score, category, confidence.
         Sorted by score descending, limited to top_k.
         """
         cursor = self._conn.execute(
-            "SELECT item_id, text, category, confidence FROM memory_items"
+            "SELECT item_id, text, category, confidence, embedding FROM memory_items"
             + (" WHERE category = ?" if category else ""),
             (category,) if category else (),
         )
         rows = cursor.fetchall()
 
+        # Try to embed the query once; None → lexical for the whole query.
+        query_vec = None
+        q = _safe_embed([query])
+        if q:
+            query_vec = q[0]
+
         scored = []
         for row in rows:
-            item_id, text, cat, conf = row
-            score = _jaccard(query, text)
+            item_id, text, cat, conf, embedding_json = row
+            score = None
+            if query_vec is not None and embedding_json:
+                try:
+                    score = _cosine(query_vec, json.loads(embedding_json))
+                except Exception:
+                    score = None
+            if score is None:  # lexical fallback (no vector / embed failed)
+                score = _jaccard(query, text)
             if score >= min_score:
                 scored.append({
                     "item_id": item_id,
@@ -205,8 +393,23 @@ def get_backend(db_url: str = ":memory:") -> SqliteMemoryBackend:
 
 
 def clear_all_backends():
-    """Clear all backend instances and release their SQLite connections."""
+    """Clear all backend instances and release their SQLite connections.
+
+    WARNING: this DELETES all stored rows. Use it to start a test from a clean
+    slate, NOT to simulate a restart — for that use close_all_backends()."""
     for backend in _backends.values():
         backend.clear()
+        backend.close()
+    _backends.clear()
+
+
+def close_all_backends():
+    """Close connections and drop the in-process backend cache WITHOUT deleting
+    any rows. The next get_backend() re-opens the same db_url from disk.
+
+    This simulates a process restart: file-backed stores keep their data, which
+    is exactly what the cross-session memory fixtures rely on to prove recall
+    survives across sessions."""
+    for backend in _backends.values():
         backend.close()
     _backends.clear()

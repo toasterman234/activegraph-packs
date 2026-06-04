@@ -31,3 +31,9 @@ def test_identity_profile_entity() -> None:
     """Identity/Auth + Agent Profile + Entity composition."""
     result = run_fixture_script("packs/fixtures/identity_profile_entity_integration.py")
     assert_fixture_passed(result)
+
+
+def test_chat_memory_cross_session() -> None:
+    """Chat long-term memory: preference written in session 1, recalled in session 2."""
+    result = run_fixture_script("packs/fixtures/chat_memory_cross_session.py")
+    assert_fixture_passed(result)

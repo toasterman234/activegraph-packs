@@ -1,0 +1,27 @@
+---
+name: ActiveGraph API quirks
+description: Non-obvious ActiveGraph runtime/pack API behaviors that bite when writing packs or behaviors.
+---
+
+# add_relation argument order differs per pack
+
+`graph.add_relation(...)` positional order is NOT consistent across packs in this
+repo:
+
+- **memory_gateway** behaviors call it as `(type, source, target)`.
+- **chat** behaviors call it as `(source, target, type)`.
+
+**Why:** the underlying API accepts these positionally and the two packs were
+written with different conventions; passing the wrong order silently builds a
+backwards/garbage edge instead of erroring.
+
+**How to apply:** when adding a relation inside a behavior, copy the order from a
+NEARBY existing `add_relation` call in the SAME pack rather than assuming a global
+convention. Prefer keyword args when the signature allows it.
+
+# Behavior registration order IS execution order
+
+The `BEHAVIORS = [...]` list order is the order behaviors run. Any behavior that
+must produce a `*_context` object the LLM responder folds into its prompt (e.g.
+chat ChatContext / ProfileContextView / MemoryContext) MUST be listed BEFORE the
+responder, or the context arrives a turn too late.

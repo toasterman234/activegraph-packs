@@ -184,11 +184,27 @@ def memory_writer(event, graph, ctx, *, settings: MemoryGatewaySettings):
 
     candidate_data = candidate.data
     now = datetime.now(timezone.utc).isoformat()
+    text = candidate_data.get("text", "")
+
+    backend = get_backend(settings.backend_url)
+
+    # Dedup: a single chat message can produce the same candidate twice — once
+    # from Core's generic source→observation→candidate path and once from the
+    # chat heuristic write-path. Collapse them: if an item with this exact
+    # (normalized) text already exists, link the candidate to it and skip the
+    # duplicate write instead of storing the statement twice.
+    existing_id = backend.find_by_text(text)
+    if existing_id:
+        try:
+            graph.add_relation("accepted_as", subject_id, existing_id)
+        except Exception:
+            pass
+        return
 
     item = graph.add_object(
         "memory_item",
         MemoryItem(
-            text=candidate_data.get("text", ""),
+            text=text,
             category=candidate_data.get("category"),
             confidence=candidate_data.get("confidence", 0.7),
             source_ids=candidate_data.get("source_ids", []),
@@ -201,7 +217,6 @@ def memory_writer(event, graph, ctx, *, settings: MemoryGatewaySettings):
     )
 
     # Store in backend
-    backend = get_backend(settings.backend_url)
     backend.store_item(
         item_id=item.id,
         text=candidate_data.get("text", ""),

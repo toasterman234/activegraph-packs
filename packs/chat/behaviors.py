@@ -460,6 +460,227 @@ def chat_profile_context(event, graph, ctx, *, settings: ChatSettings):
         pass
 
 
+# ================================================================ Long-term memory
+#
+# Two behaviors connect chat to the Memory Gateway lifecycle so the assistant
+# both BUILDS durable memory and USES it across sessions:
+#
+#   chat_memory_proposer  (WRITE)  — turns durable statements in a chat message
+#                                     into memory_candidate objects.
+#   chat_memory_context   (READ)   — recalls relevant memories for the inbound
+#                                     message and folds them into the prompt.
+#
+# Both are unopinionated and pluggable (see ChatSettings.memory_* and
+# docs/long-term-memory.md).
+
+
+# Conversation-tuned cues for the default heuristic write path. Each maps a
+# small set of first-person/durable phrasings to a memory category. This is
+# deliberately tiny and explainable — it is NOT meant to be exhaustive NLP. The
+# point is a zero-LLM, zero-cost baseline that captures the obvious cases; richer
+# extraction is a swap-in (set memory_write_path="off" and load an ingestion
+# pack that emits memory_candidate objects — that object IS the seam).
+_CHAT_MEMORY_CUES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("preference", (
+        "i prefer", "i'd prefer", "i would prefer", "i like", "i love",
+        "i hate", "i dislike", "i enjoy", "my favorite", "my favourite",
+        "i'd rather", "i would rather",
+    )),
+    ("instruction", (
+        "always", "never", "please make sure", "make sure", "remember to",
+        "remember that", "from now on", "call me", "don't ", "do not ",
+    )),
+    ("decision", (
+        "we decided", "i decided", "let's go with", "we'll use", "i'll use",
+        "we are going with", "i'm going with", "going forward we",
+    )),
+    # First-person durable facts Core's generic keyword extractor tends to miss
+    # ("i'm vegetarian", "my name is …"). Kept last so the more specific
+    # preference/instruction/decision cues win.
+    ("fact", (
+        "my name is", "i am ", "i'm ", "my email", "my timezone",
+        "i live in", "i work", "i'm based in",
+    )),
+)
+
+
+def _classify_chat_memory(text: str) -> Optional[str]:
+    """Return a memory category for *text* if it states something durable, else
+    None. Small, ordered keyword heuristic — see _CHAT_MEMORY_CUES."""
+    low = text.lower()
+    for category, cues in _CHAT_MEMORY_CUES:
+        if any(cue in low for cue in cues):
+            return category
+    return None
+
+
+@behavior(
+    name="chat_memory_proposer",
+    on=["object.created"],
+    where={
+        "object.type": "comm_message",
+        "object.data.channel": "chat",
+        "object.data.direction": "inbound",
+    },
+    creates=["memory_candidate"],
+)
+def chat_memory_proposer(event, graph, ctx, *, settings: ChatSettings):
+    """Default heuristic WRITE path: chat turn → memory_candidate.
+
+    On: object.created (comm_message, channel=chat, direction=inbound)
+    Creates: memory_candidate (when the message states a durable preference/
+             instruction/decision/fact)
+
+    ── The seam (how to swap this out) ─────────────────────────────────────────
+    The contract between "noticing something worth remembering" and "the memory
+    lifecycle" is the memory_candidate object. Memory Gateway's candidate_evaluator
+    → memory_writer pick up ANY memory_candidate, no matter who created it. So an
+    alternative ingestion strategy — an LLM extractor, an entity-extraction pack,
+    a mem0 importer — replaces this behavior simply by emitting memory_candidate
+    objects of its own; set ChatSettings.memory_write_path="off" to silence this
+    default and avoid double-proposing. No edits to the Chat Pack are required.
+
+    ── Why a heuristic by default ──────────────────────────────────────────────
+    It is zero-cost and zero-dependency: the assistant builds memory with no LLM
+    calls and no API key. Core already proposes candidates from the message's
+    source via generic extraction; this conversation-tuned pass adds first-person
+    durable cues Core misses ("call me Alex", "i'm vegetarian"). Duplicates
+    between the two paths are collapsed downstream by memory_writer's text dedup,
+    so running both is safe.
+    """
+    if settings.memory_write_path == "off":
+        return  # An external ingestion pack owns the write path.
+    if settings.memory_write_path != "heuristic":
+        return  # Unknown mode → do nothing rather than guess.
+
+    obj = event.payload.get("object", {})
+    msg_id = obj.get("id")
+    data = obj.get("data", {})
+    content = (data.get("content") or "").strip()
+    frame_id = data.get("frame_id")
+    if not msg_id or len(content) < 6:
+        return
+
+    category = _classify_chat_memory(content)
+    if category is None:
+        return  # Nothing durable detected — most chatter is not memory-worthy.
+
+    source_id = data.get("source_id")
+    try:
+        graph.add_object("memory_candidate", {
+            "text": content,
+            # Confident enough to clear the default acceptance_threshold (0.6);
+            # governance still decides via the Memory Gateway thresholds.
+            "confidence": 0.8,
+            "source_ids": [source_id] if source_id else [],
+            "observation_ids": [],
+            "category": category,
+            "subject_ref": data.get("sender_ref"),
+            "frame_id": frame_id,
+        })
+    except Exception:
+        pass
+
+
+@behavior(
+    name="chat_memory_context",
+    on=["object.created"],
+    where={
+        "object.type": "comm_message",
+        "object.data.channel": "chat",
+        "object.data.direction": "inbound",
+    },
+    creates=["memory_context"],
+)
+def chat_memory_context(event, graph, ctx, *, settings: ChatSettings):
+    """READ path: recall durable memory and fold it into this turn's prompt.
+
+    On: object.created (comm_message, channel=chat, direction=inbound)
+    Creates: memory_context (the recalled memories, as prompt-ready text)
+    Relations: provides_context_for (memory_context → comm_message)
+
+    This is the half that makes memory *useful*: it queries the Memory Gateway
+    backend for memories relevant to the inbound message and attaches the top
+    matches to the message via provides_context_for, so chat_llm_responder's
+    depth-1 view serializes them straight into the prompt — the same seam
+    chat_context_assembler (conversation memory) and chat_profile_context
+    (identity) use.
+
+    ── Why retrieve synchronously here, not via memory_retrieval_request? ───────
+    Memory Gateway's idiomatic retrieval is graph-driven: memory_retrieval_request
+    → memory_retriever → memory_retrieval. But that cascade lands in a LATER event
+    batch, so the result would not exist when chat_llm_responder fires in THIS
+    batch — the memory would arrive a turn too late. So we call retrieve_memories_fn
+    directly and create the context now, mirroring chat_profile_context's choice.
+    (Retrieval still updates backend stats, so it remains auditable.)
+
+    ── Backend must match the writer ───────────────────────────────────────────
+    We query ChatSettings.memory_backend_url, which MUST equal
+    MemoryGatewaySettings.backend_url (both default to ':memory:'). The demo
+    server points both at the same SQLite file so recall survives restarts.
+
+    ── Retrieval mode (lexical vs. embeddings) ─────────────────────────────────
+    retrieve_memories_fn is mode-agnostic: it is lexical by default and switches
+    to embeddings automatically when an embedder is registered on the backend
+    (see packs/memory_gateway/backend.py). Nothing here changes either way.
+    """
+    if not settings.include_memory:
+        return  # Cross-session recall disabled.
+
+    obj = event.payload.get("object", {})
+    msg_id = obj.get("id")
+    data = obj.get("data", {})
+    query = (data.get("content") or "").strip()
+    frame_id = data.get("frame_id")
+    if not msg_id or not query:
+        return
+
+    # Memory Gateway is an optional partner — guarded import so chat still runs
+    # without it (recall simply no-ops).
+    try:
+        from packs.memory_gateway.tools import retrieve_memories_fn
+    except Exception:
+        return
+
+    try:
+        results = retrieve_memories_fn(
+            query=query,
+            top_k=settings.memory_top_k,
+            min_score=settings.memory_min_score,
+            behavior_name="chat_memory_context",
+            frame_id=frame_id,
+            backend_url=settings.memory_backend_url,
+        )
+    except Exception:
+        return  # Recall must never break the response.
+
+    if not results:
+        return  # Nothing relevant — don't attach an empty context object.
+
+    # Render the recalled memories as plain text. This is what the LLM reads.
+    lines = []
+    for r in results:
+        cat = r.get("category")
+        prefix = f"[{cat}] " if cat else ""
+        lines.append(f"- {prefix}{r.get('text', '')}")
+    summary = "Relevant things you remember about the user:\n" + "\n".join(lines)
+
+    try:
+        view = graph.add_object("memory_context", {
+            "message_id": msg_id,
+            "query": query,
+            "item_count": len(results),
+            "item_ids": [r.get("item_id") for r in results],
+            "summary": summary,
+            "frame_id": frame_id,
+            "metadata": {},
+        })
+        # Same edge chat_context uses. NOTE: signature is (source, target, type).
+        graph.add_relation(view.id, msg_id, "provides_context_for")
+    except Exception:
+        pass
+
+
 @llm_behavior(
     name="chat_llm_responder",
     on=["object.created"],
@@ -594,15 +815,19 @@ def chat_responder(event, graph, ctx, *, settings: ChatSettings):
 
 # ================================================================ BEHAVIORS registry
 
-# Registration order is execution order. chat_context_assembler and
-# chat_profile_context must both run BEFORE chat_llm_responder so the ChatContext
-# (conversation memory) and the ProfileContextView (identity) — and their
+# Registration order is execution order. chat_context_assembler,
+# chat_profile_context and chat_memory_context must all run BEFORE
+# chat_llm_responder so the ChatContext (conversation memory), MemoryContext
+# (long-term memory) and ProfileContextView (identity) — and their
 # provides_context_for edges — exist when the responder's depth-1 view is built
-# and the LLM is called.
+# and the LLM is called. chat_memory_proposer (the WRITE path) can run anytime;
+# it is grouped with the context behaviors for readability.
 BEHAVIORS = [
     chat_ingester,
     chat_context_assembler,
     chat_profile_context,
+    chat_memory_proposer,
+    chat_memory_context,
     chat_llm_responder,
     chat_responder,
 ]

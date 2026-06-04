@@ -177,6 +177,9 @@ python packs/fixtures/comm_chat_email_integration.py
 
 # Identity + Profile + Entity integration
 python packs/fixtures/identity_profile_entity_integration.py
+
+# Chat long-term memory across sessions (write → restart → recall)
+python packs/fixtures/chat_memory_cross_session.py
 ```
 
 The demo server also loads all fixture data on startup — `POST /reset` re-seeds from scratch if you want a clean run.
