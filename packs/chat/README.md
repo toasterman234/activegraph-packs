@@ -1,6 +1,7 @@
-# Chat Adapter Pack v0.1
+# Chat Adapter Pack v0.2
 
-Translates interactive chat input into channel-neutral CommMessage objects.
+Translates interactive chat input into channel-neutral CommMessage objects, with
+**graph-native conversation memory**.
 
 ## Purpose
 
@@ -9,6 +10,10 @@ semantic layer. It handles session continuity, per-turn context assembly, and
 LLM-based response generation. With `llm_provider="mock"`, it runs entirely
 without API keys (useful for fixtures and tests).
 
+The defining principle is that **conversation memory lives in the graph**, not in
+process memory. Prior turns are reconstructed from persisted graph objects on
+every turn, so the conversation survives an API-server restart mid-session.
+
 ## Object Types
 
 | Type | Description |
@@ -16,6 +21,7 @@ without API keys (useful for fixtures and tests).
 | `chat_input` | Raw input from chat interface. Entry point for the adapter. |
 | `chat_session` | Persistent session grouping multiple ChatTurns |
 | `chat_turn` | Single request-response exchange (user_message + assistant_message) |
+| `chat_context` | Graph-native conversation memory assembled for one inbound message |
 
 ## Relation Types
 
@@ -24,21 +30,30 @@ without API keys (useful for fixtures and tests).
 | `session_contains_turn` | chat_session → chat_turn | Session contains a turn |
 | `turn_from_input` | chat_turn → chat_input | Turn created from input |
 | `session_has_thread` | chat_session → comm_thread | Session linked to CommThread |
+| `provides_context_for` | chat_context → comm_message | Context assembled for a message |
 
 ## Behavior Map
 
 ```
 chat_input.created
   → chat_ingester
-      resolves/creates ChatSession (by user_ref or session_id)
+      resolves/creates ChatSession (by explicit session_id from the graph, else
+        by user_ref via the in-process cache, else new)
       creates: source(kind=chat_message), comm_message(channel=chat, inbound)
       creates: chat_turn(user_message=content, turn_number=N)
       relations: derived_from_source, session_contains_turn, turn_from_input
       → (triggers thread_tracker in Communication Pack → CommThread)
 
 comm_message.created [channel=chat, direction=inbound]
+  → chat_context_assembler                 (runs BEFORE chat_llm_responder)
+      reads prior turns from the session-anchored graph view (restart-safe)
+      formats the most recent `max_context_messages` into a transcript
+      creates: chat_context(transcript, turn_count)
+      relations: provides_context_for (chat_context → comm_message)
+
   → chat_llm_responder
-      assembles context: prior turns, profile view, memory (when loaded)
+      depth-1 view around the message captures the linked chat_context
+      the runtime serializes the view into the prompt (no hand-written prompts)
       if llm_provider="mock": deterministic stub response
       creates: comm_response_candidate(channel=chat, status=approved*)
       relations: response_to
@@ -46,20 +61,56 @@ comm_message.created [channel=chat, direction=inbound]
 
 comm_response_candidate.created [channel=chat, status=approved]
   → chat_responder
-      patches: chat_turn.assistant_message = content
+      patches: chat_turn.assistant_message = content   (← now part of the graph,
+        so the NEXT turn's chat_context_assembler reads it back)
       patches: chat_turn.response_candidate_id = candidate.id
 
   → response_dispatcher (Communication Pack)
       patches: comm_response_candidate.status = "sent"
 ```
 
+## Conversation memory (graph-native)
+
+The LLM only ever sees the serialized graph **view** — the runtime assembles every
+prompt from it, and developers never hand-write prompt text. So for the model to
+"remember" earlier turns, those turns must appear in the responder's view.
+
+`chat_context_assembler` makes that happen the ActiveGraph way:
+
+1. On each inbound message it builds a view anchored at the `ChatSession`
+   (depth 1), which contains every `chat_turn` linked by `session_contains_turn`.
+2. It excludes the current turn, keeps the most recent `max_context_messages`,
+   and renders them into a `chat_context.transcript`.
+3. It links the `chat_context` to the inbound message via `provides_context_for`,
+   so `chat_llm_responder`'s existing depth-1 view captures it without widening.
+
+Because every prior turn is read from **persisted graph objects** (not an
+in-process dict), conversation context survives an API-server restart
+mid-session. The `chat_context` object is also a first-class, inspectable record
+of exactly what memory was shown to the model.
+
+An alternative considered was simply widening `chat_llm_responder`'s view to reach
+the session and its turns. That is simpler, but it pulls *every* turn (no
+`max_context_messages` bound), scatters them as raw objects, and records nothing
+about what context was used. See the long comment on `chat_context_assembler` in
+`behaviors.py` for the full trade-off.
+
 ## Session Continuity
 
-`chat_ingester` maintains `_SESSION_REGISTRY` (user_ref → session state):
+`chat_ingester` resolves the session graph-first, so continuity is restart-safe:
 
-1. First message for a `user_ref`: creates new `ChatSession` + `CommThread`
-2. Subsequent messages (same `user_ref`): resumes existing session, increments `turn_number`
-3. Explicit `session_id` in `ChatInput`: always resumes that exact session
+1. Explicit `session_id` in `ChatInput`: resumes that exact `ChatSession` by
+   reading it from the **graph** (`turn_number` continues from the persisted
+   `turn_count`). This is what the Inspector UI sends, and it works even after a
+   restart has cleared the in-process caches.
+2. No `session_id`: resumes the user's session via the `_SESSION_REGISTRY` cache
+   (a best-effort convenience), falling through to a new session on a cache miss.
+3. Neither resolves: creates a new `ChatSession` + `CommThread`.
+
+The in-process maps (`_SESSION_REGISTRY`, `_MESSAGE_TO_TURN`, `_MESSAGE_TO_SESSION`)
+are hot-path caches only — never the source of truth. Every value they hold is
+also recorded on graph objects, and behaviors fall back to graph lookups when a
+cache misses.
 
 ## Settings
 

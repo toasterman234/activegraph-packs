@@ -105,10 +105,11 @@ def run_three_turn_conversation_fixture() -> dict:
         f"Session.turn_count should be 3, got {session.data.get('turn_count')}"
 
     # ── Verify session_contains_turn relations ───────────────────────────
-    rels = list(g.relations())
-    session_turn_rels = [r for r in rels if r.source == "session_contains_turn"]
+    session_turn_rels = list(g.relations(type="session_contains_turn"))
     assert len(session_turn_rels) == 3, \
         f"Expected 3 session_contains_turn rels, got {len(session_turn_rels)}"
+    assert all(r.source == session_id for r in session_turn_rels), \
+        "session_contains_turn relations must originate from the session"
 
     # ── Collect intent observations ───────────────────────────────────────
     all_intents = list(g.objects(type="comm_intent"))
@@ -152,6 +153,112 @@ def run_session_continuity_fixture() -> dict:
     return {"sessions": len(sessions_after), "turns": len(turns)}
 
 
+def run_multi_turn_recall_fixture() -> dict:
+    """Conversation memory is graph-native and restart-safe.
+
+    Proves that prior turns are reconstructed from the graph (not from process
+    memory): we wipe ALL in-process caches between turns to simulate an
+    API-server restart mid-session, then confirm turn 2 still resumes the same
+    session AND assembles a ChatContext containing turn 1's exchange.
+    """
+    g, rt = _make_runtime()
+
+    # ── Turn 1 ────────────────────────────────────────────────────────────
+    submit_chat_input_fn(g, user_ref="sam@example.com", content="My name is Sam.")
+    rt.run_until_idle()
+    session_id = list(g.objects(type="chat_session"))[0].id
+
+    # Simulate an API-server restart: drop every in-process cache. The graph is
+    # the only surviving store — if memory weren't graph-native, this would
+    # break session continuity and lose the prior turn.
+    clear_session_registry()
+
+    # ── Turn 2 — resume by explicit session_id (as the Inspector UI does) ──
+    submit_chat_input_fn(g, user_ref="sam@example.com",
+                         content="What is my name?", session_id=session_id)
+    rt.run_until_idle()
+
+    # Session continuity survived the cache wipe (resolved from the graph).
+    sessions = list(g.objects(type="chat_session"))
+    assert len(sessions) == 1, f"expected 1 session after restart, got {len(sessions)}"
+    turns = sorted(g.objects(type="chat_turn"), key=lambda t: t.data.get("turn_number", 0))
+    assert len(turns) == 2, f"expected 2 turns, got {len(turns)}"
+    assert turns[-1].data.get("turn_number") == 2, "turn 2 must continue numbering"
+    assert turns[-1].data.get("assistant_message") is not None, "turn 2 must be answered"
+
+    # A ChatContext was assembled for turn 2 (and only turn 2 — turn 1 had no
+    # prior memory), and it contains turn 1's user message.
+    contexts = list(g.objects(type="chat_context"))
+    assert len(contexts) == 1, f"expected 1 chat_context, got {len(contexts)}"
+    ctx_obj = contexts[0]
+    assert ctx_obj.data.get("turn_count") == 1, \
+        f"context should include 1 prior turn, got {ctx_obj.data.get('turn_count')}"
+    transcript = ctx_obj.data.get("transcript") or ""
+    assert "My name is Sam." in transcript, \
+        "graph-derived context must include the prior user message"
+
+    # The context is linked to the inbound message (provides_context_for) so the
+    # responder's depth-1 view captures it — this edge is what actually carries
+    # the prior turns into the LLM prompt.
+    ctx_rels = list(g.relations(type="provides_context_for"))
+    assert len(ctx_rels) == 1, \
+        f"expected 1 provides_context_for rel, got {len(ctx_rels)}"
+    assert ctx_rels[0].source == ctx_obj.id, "rel must originate from the chat_context"
+    assert ctx_rels[0].target == ctx_obj.data.get("message_id"), \
+        "rel must point at the inbound message the context was assembled for"
+
+    return {
+        "sessions": len(sessions),
+        "turns": len(turns),
+        "context_turn_count": ctx_obj.data.get("turn_count"),
+    }
+
+
+def run_bounded_context_fixture() -> dict:
+    """max_context_messages bounds how many prior turns enter the context."""
+    g = Graph()
+    clear_thread_registry()
+    clear_session_registry()
+    rt = Runtime(g, llm_provider=MockChatProvider())
+    rt.load_pack(core_pack, settings=CoreSettings())
+    rt.load_pack(comm_pack, settings=CommunicationSettings())
+    rt.load_pack(
+        chat_pack,
+        settings=ChatSettings(
+            llm_provider="mock",
+            auto_approve_responses=True,
+            max_context_messages=1,  # only the single most recent prior turn
+        ),
+    )
+
+    session_id = None
+    for i in range(3):
+        submit_chat_input_fn(g, user_ref="cap@example.com",
+                             content=f"Message {i + 1}.", session_id=session_id)
+        rt.run_until_idle()
+        if session_id is None:
+            session_id = list(g.objects(type="chat_session"))[0].id
+
+    # Turns 2 and 3 each assemble a context; with max_context_messages=1 every
+    # one must be bounded to a single prior turn (never 2), proving the cap.
+    contexts = list(g.objects(type="chat_context"))
+    assert len(contexts) == 2, f"expected 2 contexts (turns 2 & 3), got {len(contexts)}"
+    assert all(c.data.get("turn_count") == 1 for c in contexts), \
+        f"every context must be bounded to 1 turn, got {[c.data.get('turn_count') for c in contexts]}"
+
+    # Boundedness must hold for the actual text the LLM sees, not just the count.
+    # Turn 3's context (prior = [turn 2]) must include "Message 2." and must NOT
+    # leak the older "Message 1." — proving the cap drops dropped turns entirely.
+    turn3_ctx = next(
+        (c for c in contexts
+         if "Message 2." in (c.data.get("transcript") or "")), None)
+    assert turn3_ctx is not None, "expected a context covering the most recent prior turn"
+    assert "Message 1." not in (turn3_ctx.data.get("transcript") or ""), \
+        "older turn leaked past max_context_messages into the transcript"
+
+    return {"contexts": len(contexts), "bounded_to": 1}
+
+
 def run_all() -> bool:
     print("=" * 60)
     print("Chat Adapter Pack Fixtures")
@@ -175,6 +282,23 @@ def run_all() -> bool:
     try:
         result = run_session_continuity_fixture()
         print(f"  PASS: sessions={result['sessions']}, turns={result['turns']}")
+    except AssertionError as e:
+        print(f"  FAIL: {e}")
+        all_pass = False
+
+    print("\n[3] multi-turn recall (graph-native, restart-safe) fixture")
+    try:
+        result = run_multi_turn_recall_fixture()
+        print(f"  PASS: sessions={result['sessions']}, turns={result['turns']}, "
+              f"context_turn_count={result['context_turn_count']}")
+    except AssertionError as e:
+        print(f"  FAIL: {e}")
+        all_pass = False
+
+    print("\n[4] bounded context (max_context_messages) fixture")
+    try:
+        result = run_bounded_context_fixture()
+        print(f"  PASS: contexts={result['contexts']}, bounded_to={result['bounded_to']}")
     except AssertionError as e:
         print(f"  FAIL: {e}")
         all_pass = False

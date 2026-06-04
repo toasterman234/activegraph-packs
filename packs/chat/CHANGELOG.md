@@ -1,5 +1,42 @@
 # Chat Pack Changelog
 
+## v0.2.0 — Graph-native conversation memory (2026-06-04)
+
+### Added
+- `chat_context` object type — a first-class, inspectable record of the
+  conversation memory assembled for one inbound message (transcript + turn_count).
+- `provides_context_for` relation (`chat_context → comm_message`) — links the
+  assembled memory to the message it was built for, so the responder's existing
+  depth-1 view captures it without widening.
+- `chat_context_assembler` behavior — on `comm_message.created (channel=chat,
+  inbound)`, reads prior turns from the **session-anchored graph view**, keeps the
+  most recent `max_context_messages`, renders a transcript, and creates the
+  `chat_context`. Runs before `chat_llm_responder` in the behavior order.
+- Fixtures: `run_multi_turn_recall_fixture` (graph-native, restart-safe recall)
+  and `run_bounded_context_fixture` (verifies `max_context_messages` bound).
+
+### Changed
+- **Conversation memory is now graph-native.** Prior turns reach the LLM only via
+  the serialized graph view, reconstructed from persisted objects on every turn —
+  so a conversation survives an API-server restart mid-session. Replaced the
+  process-local `_SESSION_TURN_HISTORY` side-channel (removed).
+- `chat_ingester` resolves an explicit `session_id` from the **graph**
+  (`turn_count`), making session continuity restart-safe. The in-process
+  `_SESSION_REGISTRY` is now a best-effort cache, never the source of truth.
+- `get_session_turns` tool now reads turns from the graph instead of a process dict.
+
+### Fixed
+- **`add_relation` argument order.** All chat-pack calls passed
+  `(type, source, target)` but the API is `(source, target, type)`. The malformed
+  relations had the type string as their `source`, which silently broke
+  neighborhood traversal and views (the assembler saw no turns). Corrected all
+  calls and the fixture assertion that had been written against the broken shape.
+
+### Removed
+- Dead `context_turn_count` write on `comm_response_candidate` — the field is not
+  in that schema and was always dropped. The auditable count now lives on
+  `chat_context.turn_count`.
+
 ## v0.1.0 — Initial release (2026-06-03)
 
 ### Added

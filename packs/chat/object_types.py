@@ -123,6 +123,40 @@ class ChatTurn(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ChatContext(BaseModel):
+    """Graph-native conversation memory for one inbound message.
+
+    chat_context_assembler reconstructs the recent conversation from prior
+    ChatTurns in the graph (linked to the session via session_contains_turn)
+    and writes it as a ChatContext linked to the inbound CommMessage. Because
+    the responder's scoped graph view is the only channel into the LLM prompt
+    (the runtime assembles every prompt from the serialized view — developers
+    never hand-write prompts), this object is what carries prior turns to the
+    model. It is the chat analogue of agent_profile's ProfileContextView.
+
+    It is reconstructed from persisted graph objects on every turn, so it
+    requires no in-process state and survives a restart mid-session.
+    """
+
+    session_id: str = Field(description="ID of the ChatSession this context summarizes.")
+    message_id: str = Field(
+        description="ID of the inbound CommMessage this context was assembled for."
+    )
+    turn_count: int = Field(
+        default=0,
+        description="Number of prior turns included (bounded by max_context_messages).",
+    )
+    transcript: str = Field(
+        default="",
+        description=(
+            "The prior conversation rendered as plain text (User/Assistant lines), "
+            "ordered chronologically. This is what the LLM reads as memory."
+        ),
+    )
+    frame_id: Optional[str] = Field(default=None)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 # ================================================================ ObjectType list
 
 OBJECT_TYPES = [
@@ -150,6 +184,15 @@ OBJECT_TYPES = [
             "user_message is set on creation; assistant_message is populated after delivery."
         ),
     ),
+    ObjectType(
+        name="chat_context",
+        schema=ChatContext,
+        description=(
+            "Graph-native conversation memory for one inbound message. Assembled "
+            "by chat_context_assembler from prior ChatTurns and read by "
+            "chat_llm_responder as the conversation history shown to the LLM."
+        ),
+    ),
 ]
 
 
@@ -173,5 +216,15 @@ RELATION_TYPES = [
         source_types=("chat_session",),
         target_types=("comm_thread",),
         description="A ChatSession corresponds to a CommThread.",
+    ),
+    RelationType(
+        name="provides_context_for",
+        source_types=("chat_context",),
+        target_types=("comm_message",),
+        description=(
+            "A ChatContext provides conversation memory for an inbound CommMessage. "
+            "This edge lets chat_llm_responder's depth-1 view capture the context "
+            "without widening its scope."
+        ),
     ),
 ]

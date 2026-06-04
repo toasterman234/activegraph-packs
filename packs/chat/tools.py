@@ -30,21 +30,17 @@ def submit_chat_input_fn(
 
 
 def get_session_turns_fn(graph, session_id: str) -> list:
-    """Return all ChatTurn objects for a session, ordered by turn_number."""
-    from packs.chat.behaviors import _MESSAGE_TO_TURN, _MESSAGE_TO_SESSION
-    turn_ids = list({
-        turn_id
-        for msg_id, turn_id in _MESSAGE_TO_TURN.items()
-        if _MESSAGE_TO_SESSION.get(msg_id) == session_id
-    })
-    turns = []
-    for tid in turn_ids:
-        try:
-            obj = graph.get_object(tid)
-            if obj:
-                turns.append(obj)
-        except Exception:
-            pass
+    """Return all ChatTurn objects for a session, ordered by turn_number.
+
+    Graph-native: reads chat_turn objects straight from the graph rather than
+    from any in-process map, so it stays correct after an API-server restart.
+    Calling ``graph.objects(...)`` is safe here because tools run outside the
+    behavior sandbox (unlike behaviors, which must read through ``ctx.view``).
+    """
+    turns = [
+        t for t in graph.objects(type="chat_turn")
+        if t.data.get("session_id") == session_id
+    ]
     return sorted(turns, key=lambda t: t.data.get("turn_number", 0))
 
 

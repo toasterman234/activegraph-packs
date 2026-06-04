@@ -44,6 +44,18 @@ them, or `/reset` can report success while stale data survives.
 - `rel.type`   = target object id
 Verified empirically. Serialize as: type←source, source_id←target, target_id←type.
 
+## add_relation() call signature is (source, target, type) — easy to invert
+`graph.add_relation(source_id, target_id, type_label)` takes the two object ids
+FIRST and the type label LAST. Calling it as `(type, source, target)` is silently
+accepted: it builds a relation whose `source` is the type *string*, so
+`graph.relations(type=...)`, `neighborhood()`, and views find nothing and the
+failure surfaces far away (e.g. a context/assembler behavior "sees no neighbors").
+**Why:** an entire pack was written with the args inverted; views silently returned
+empty and the bug looked like a traversal/depth problem, not a bad write.
+**How to apply:** when a view/neighborhood is unexpectedly empty, first verify the
+relation was written with object ids in the first two positions — assert
+`rel.source`/`rel.target` are real object ids, not a type label.
+
 ## SQLite single-writer caveat
 The SQLite backend is single-writer; multiple processes writing the same DB file is
 unsafe. Fine for a single-process demo server, not for multi-writer deployment.
