@@ -28,6 +28,7 @@ from bundles.assistant import (
     ASSISTANT_PACK_LIST,
     build_assistant,
     load_assistant_packs,
+    seed_default_profile,
 )
 from bundles.email_assistant import (
     EMAIL_ASSISTANT_BUNDLE,
@@ -42,6 +43,7 @@ __all__ = [
     "ASSISTANT_PACK_LIST",
     "build_assistant",
     "load_assistant_packs",
+    "seed_default_profile",
     "EMAIL_ASSISTANT_BUNDLE",
     "EMAIL_ASSISTANT_PACK_LIST",
     "build_email_assistant",

@@ -72,6 +72,50 @@ def load_assistant_packs(
     return rt
 
 
+def seed_default_profile(
+    rt: Runtime,
+    *,
+    agent_profile_settings: AgentProfileSettings | None = None,
+) -> str | None:
+    """Seed a single default AgentProfile when none exists yet.
+
+    A zero-config assistant should still be able to answer "who are you?" /
+    "what is your mission?". This creates ONE AgentProfile from the profile
+    settings' defaults (name + mission + owner) so chat_profile_context has
+    something to assemble, then runs the runtime so the recorder behaviors
+    index it in the local registry.
+
+    Idempotent by design:
+      * Fresh runtime → no agent_profile objects → seed one.
+      * Resumed runtime (Runtime.load replays prior events) → the profile is
+        already present → skip. (Use rebuild_profile_registry on resume to
+        repopulate the in-memory index; replay does not fire recorders.)
+
+    Returns the profile id (existing or newly seeded), or None if seeding was
+    skipped because agent_profile is not loaded.
+    """
+    settings = agent_profile_settings or AgentProfileSettings()
+    # graph.objects() is safe here — we are outside any behavior (build time).
+    try:
+        existing = list(rt.graph.objects(type="agent_profile"))
+    except Exception:
+        return None  # agent_profile object type not registered → pack absent.
+    if existing:
+        return existing[0].id
+
+    from packs.agent_profile.tools import register_profile_fn
+
+    profile = register_profile_fn(
+        rt.graph,
+        name=settings.default_agent_name,
+        mission=settings.default_mission,
+        owner_name=settings.owner_name,
+    )
+    # Settle the creation so profile_registry_recorder indexes it.
+    rt.run_until_idle()
+    return profile.id
+
+
 def build_assistant(
     *,
     core_settings: CoreSettings | None = None,
@@ -84,6 +128,7 @@ def build_assistant(
     chat_settings: ChatSettings | None = None,
     llm_provider=None,
     persist_to: str | None = None,
+    seed_profile: bool = True,
 ) -> Runtime:
     """Create a Runtime with the Assistant Bundle loaded.
 
@@ -135,6 +180,11 @@ def build_assistant(
         communication_settings=communication_settings,
         chat_settings=chat_settings,
     )
+
+    # Give a fresh assistant a self-description out of the box so chat can answer
+    # "who are you?" with no setup. Opt out with seed_profile=False.
+    if seed_profile:
+        seed_default_profile(rt, agent_profile_settings=agent_profile_settings)
 
     return rt
 

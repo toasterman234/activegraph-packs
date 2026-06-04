@@ -3,8 +3,16 @@
 Behaviors:
   chat_ingester          — chat_input.created → Source + CommMessage + ChatSession + ChatTurn
   chat_context_assembler — comm_message.created (chat, inbound) → ChatContext (graph-native memory)
+  chat_profile_context   — comm_message.created (chat, inbound) → ProfileContextView (self-knowledge)
   chat_llm_responder     — comm_message.created (chat, inbound) → CommResponseCandidate
   chat_responder         — comm_response_candidate.created (chat, approved) → ChatTurn updated
+
+Self-knowledge (who are you? / what is your mission?):
+  chat_profile_context reuses the Agent Profile Pack to assemble the assistant's
+  identity into a ProfileContextView and links it to the inbound CommMessage via
+  provides_context_for — the same seam chat_context_assembler uses for memory. The
+  responder's depth-1 view then folds both into the prompt. Agent Profile is an
+  optional partner: without it, the behavior no-ops and chat runs identity-free.
 
 Graph-native conversation memory (v0.2):
   Conversation memory is reconstructed from the graph, not from process memory.
@@ -337,6 +345,121 @@ def chat_context_assembler(event, graph, ctx, *, settings: ChatSettings):
         pass
 
 
+@behavior(
+    name="chat_profile_context",
+    on=["object.created"],
+    where={
+        "object.type": "comm_message",
+        "object.data.channel": "chat",
+        "object.data.direction": "inbound",
+    },
+    creates=["profile_context_view"],
+)
+def chat_profile_context(event, graph, ctx, *, settings: ChatSettings):
+    """Fold the assistant's self-knowledge into the LLM context for a chat turn.
+
+    On: object.created (comm_message, channel=chat, direction=inbound)
+    Creates: profile_context_view (the assistant's identity/mission/etc.)
+    Relations: provides_context_for (profile_context_view → comm_message)
+
+    This is what lets the assistant answer "who are you?" / "what is your
+    mission?" — the AgentProfile is assembled into a ProfileContextView, linked
+    to the inbound message, and chat_llm_responder's depth-1 view then serializes
+    it into the prompt (the runtime assembles every prompt from the view; a
+    behavior never hand-writes prompt text). It mirrors chat_context_assembler:
+    same seam (provides_context_for → comm_message), different payload (identity
+    vs. conversation memory).
+
+    ── Why assemble inline rather than reuse the request→view cascade? ──────────
+    Agent Profile's idiomatic path is profile_context_request → (provider) →
+    profile_context_view. We deliberately do NOT use it here: the request would
+    be processed in a *later* event cascade, so the resulting view would not
+    exist yet when chat_llm_responder fires in this same batch — the context
+    would arrive one turn too late. Instead we call agent_profile's
+    assemble_profile_view() synchronously and create the view now, so the edge is
+    in place before the responder's view is built. We still reuse the pack's
+    assembly *logic* (one shared builder), just not its asynchronous plumbing.
+
+    ── Decoupling ──────────────────────────────────────────────────────────────
+    Agent Profile is an OPTIONAL composition partner. The import is guarded, so
+    if the Chat Pack is loaded without agent_profile this behavior simply does
+    nothing and chat runs identity-free.
+
+    ── system_prompt_override escape hatch ─────────────────────────────────────
+    The framework system prompt is the responder's static @llm_behavior
+    description, which can't be swapped per-call. So when an operator sets
+    system_prompt_override, we honor it through the same view seam: inject the
+    literal string as the sole context (and skip the profile entirely). It is a
+    bypass — the profile does not contribute when an override is set.
+
+    ── Precedence (two independent knobs) ──────────────────────────────────────
+    `system_prompt_override` and `include_profile` are checked independently, and
+    the override is the more specific, more intentional setting, so it wins:
+      1. system_prompt_override set  → inject the override (even if
+         include_profile=False — an explicit override is always honored).
+      2. else include_profile=True   → assemble the AgentProfile view.
+      3. else                        → inject nothing (responder falls back to
+         its static system prompt).
+    """
+    obj = event.payload.get("object", {})
+    msg_id = obj.get("id")
+    msg_data = obj.get("data", {})
+    frame_id = msg_data.get("frame_id")
+    if not msg_id:
+        return
+
+    # ── Escape hatch: literal system-prompt override (bypasses the profile) ──
+    # Checked BEFORE the include_profile gate: an explicitly configured override
+    # is an intentional, specific instruction and is always honored.
+    override = settings.system_prompt_override
+    if override is not None:
+        try:
+            view = graph.add_object("profile_context_view", {
+                "profile_id": "",
+                "channel": "chat",
+                "audience_role": "owner",
+                "agent_name": "",
+                "mission": "",
+                "standing_instructions": [override],
+                "frame_id": frame_id,
+                "metadata": {"origin": "system_prompt_override"},
+            })
+            graph.add_relation(view.id, msg_id, "provides_context_for")
+        except Exception:
+            pass
+        return
+
+    # No override → the profile path is gated by include_profile.
+    if not settings.include_profile:
+        return
+
+    # ── Reuse Agent Profile's assembly (guarded — optional dependency) ───────
+    try:
+        from packs.agent_profile.behaviors import assemble_profile_view
+        from packs.agent_profile.settings import AgentProfileSettings
+    except Exception:
+        return  # agent_profile not installed/loaded → run identity-free.
+
+    # Chat is the owner's own console, so assemble the owner-facing view.
+    view_model = assemble_profile_view(
+        graph,
+        settings=AgentProfileSettings(),
+        channel="chat",
+        audience_role="owner",
+        frame_id=frame_id,
+    )
+    if view_model is None:
+        return  # No profile registered yet — nothing to inject.
+
+    try:
+        view = graph.add_object("profile_context_view", view_model.model_dump())
+        # Same edge chat_context uses, so the responder's depth-1 view captures
+        # it for free. NOTE: add_relation signature is (source, target, type).
+        graph.add_relation(view.id, msg_id, "provides_context_for")
+    except Exception:
+        pass
+
+
 @llm_behavior(
     name="chat_llm_responder",
     on=["object.created"],
@@ -471,12 +594,15 @@ def chat_responder(event, graph, ctx, *, settings: ChatSettings):
 
 # ================================================================ BEHAVIORS registry
 
-# Registration order is execution order. chat_context_assembler must run BEFORE
-# chat_llm_responder so the ChatContext (and its provides_context_for edge)
-# exists when the responder's view is built and the LLM is called.
+# Registration order is execution order. chat_context_assembler and
+# chat_profile_context must both run BEFORE chat_llm_responder so the ChatContext
+# (conversation memory) and the ProfileContextView (identity) — and their
+# provides_context_for edges — exist when the responder's depth-1 view is built
+# and the LLM is called.
 BEHAVIORS = [
     chat_ingester,
     chat_context_assembler,
+    chat_profile_context,
     chat_llm_responder,
     chat_responder,
 ]

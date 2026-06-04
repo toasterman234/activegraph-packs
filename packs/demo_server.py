@@ -183,6 +183,15 @@ def _build_runtime():
         # the replayed principals to avoid creating duplicates on the next
         # message from an already-known sender.
         n = rebuild_principal_registry(rt.graph)
+        # Same problem for the profile registry: replay didn't fire the profile
+        # recorders, so chat_profile_context would find no profile to assemble.
+        # Rebuild it from the replayed profile objects (incl. the seeded default).
+        from packs.agent_profile.behaviors import rebuild_profile_registry
+        from bundles import seed_default_profile
+        rebuild_profile_registry(rt.graph)
+        # Stores created before self-knowledge existed have no profile; seed one
+        # now (idempotent — skips if the resumed store already has a profile).
+        seed_default_profile(rt)
         print(f"[demo_server] Resumed run {rt.run_id} from {db} "
               f"({n} principals re-indexed)", flush=True)
     else:

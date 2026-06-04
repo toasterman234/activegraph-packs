@@ -259,6 +259,120 @@ def run_bounded_context_fixture() -> dict:
     return {"contexts": len(contexts), "bounded_to": 1}
 
 
+def run_self_knowledge_fixture() -> dict:
+    """The assistant can answer "who are you?" using the Agent Profile Pack.
+
+    Proves the wiring at the GRAPH level (the mock LLM returns a fixed canned
+    reply, so asserting on reply text would prove nothing): a ProfileContextView
+    carrying the assistant's identity is assembled and linked to the inbound
+    message via provides_context_for. That edge is exactly what the responder's
+    depth-1 view serializes into the prompt, so a live LLM would see the name +
+    mission and answer accordingly.
+
+    Also checks the two gates: include_profile=False suppresses injection, and
+    system_prompt_override injects the literal override instead of the profile.
+    """
+    from packs.agent_profile import pack as ap_pack, AgentProfileSettings
+    from packs.agent_profile.behaviors import clear_profile_registry
+    from packs.agent_profile.tools import register_profile_fn
+
+    def _runtime(chat_settings: ChatSettings):
+        clear_thread_registry()
+        clear_session_registry()
+        clear_profile_registry()
+        g = Graph()
+        rt = Runtime(g, llm_provider=MockChatProvider())
+        rt.load_pack(core_pack, settings=CoreSettings())
+        rt.load_pack(ap_pack, settings=AgentProfileSettings())
+        rt.load_pack(comm_pack, settings=CommunicationSettings())
+        rt.load_pack(chat_pack, settings=chat_settings)
+        return g, rt
+
+    # ── 1. Profile present + include_profile (default) → identity injected ──
+    g, rt = _runtime(ChatSettings(llm_provider="mock", auto_approve_responses=True))
+    register_profile_fn(g, name="Aria",
+                        mission="Help Alice grow her robotics startup.",
+                        owner_name="Alice")
+    rt.run_until_idle()
+
+    submit_chat_input_fn(g, user_ref="alice@example.com",
+                         content="Who are you and what is your mission?")
+    rt.run_until_idle()
+
+    msgs = list(g.objects(type="comm_message"))
+    assert len(msgs) == 1, f"expected 1 comm_message, got {len(msgs)}"
+    msg_id = msgs[0].id
+
+    views = list(g.objects(type="profile_context_view"))
+    assert len(views) == 1, f"expected 1 profile_context_view, got {len(views)}"
+    view = views[0]
+    assert view.data.get("agent_name") == "Aria", \
+        f"view must carry the assistant name, got {view.data.get('agent_name')}"
+    assert "robotics startup" in (view.data.get("mission") or ""), \
+        "owner-facing view must include the mission"
+
+    # The view is linked to THIS inbound message, so the responder's depth-1
+    # view (and thus the LLM prompt) captures it.
+    ctx_rels = [r for r in g.relations(type="provides_context_for")
+                if r.source == view.id]
+    assert len(ctx_rels) == 1, "profile view must link to the inbound message"
+    assert ctx_rels[0].target == msg_id, "link must point at the inbound message"
+
+    # The pipeline still produced a reply (mock canned text).
+    turns = list(g.objects(type="chat_turn"))
+    assert turns and turns[0].data.get("assistant_message"), "turn must be answered"
+
+    # ── 2. include_profile=False → no identity injected ────────────────────
+    g2, rt2 = _runtime(ChatSettings(llm_provider="mock", auto_approve_responses=True,
+                                    include_profile=False))
+    register_profile_fn(g2, name="Aria", mission="Help Alice.", owner_name="Alice")
+    rt2.run_until_idle()
+    submit_chat_input_fn(g2, user_ref="alice@example.com", content="Who are you?")
+    rt2.run_until_idle()
+    assert len(list(g2.objects(type="profile_context_view"))) == 0, \
+        "include_profile=False must suppress profile injection"
+
+    # ── 3. system_prompt_override → literal override, profile bypassed ─────
+    override = "You are a terse status bot. Answer in one line."
+    g3, rt3 = _runtime(ChatSettings(llm_provider="mock", auto_approve_responses=True,
+                                    system_prompt_override=override))
+    register_profile_fn(g3, name="Aria", mission="Help Alice.", owner_name="Alice")
+    rt3.run_until_idle()
+    submit_chat_input_fn(g3, user_ref="alice@example.com", content="Who are you?")
+    rt3.run_until_idle()
+    ov_views = list(g3.objects(type="profile_context_view"))
+    assert len(ov_views) == 1, f"override must inject 1 context view, got {len(ov_views)}"
+    ov = ov_views[0]
+    assert ov.data.get("agent_name") == "", "override must NOT carry the profile name"
+    assert ov.data.get("standing_instructions") == [override], \
+        "override text must be injected as the sole instruction"
+    assert (ov.data.get("metadata") or {}).get("origin") == "system_prompt_override"
+
+    # ── 4. override wins over include_profile=False (independent knobs) ─────
+    g4, rt4 = _runtime(ChatSettings(llm_provider="mock", auto_approve_responses=True,
+                                    include_profile=False,
+                                    system_prompt_override=override))
+    register_profile_fn(g4, name="Aria", mission="Help Alice.", owner_name="Alice")
+    rt4.run_until_idle()
+    submit_chat_input_fn(g4, user_ref="alice@example.com", content="Who are you?")
+    rt4.run_until_idle()
+    ov4 = list(g4.objects(type="profile_context_view"))
+    assert len(ov4) == 1, \
+        "an explicit override must be honored even when include_profile=False"
+    assert ov4[0].data.get("standing_instructions") == [override], \
+        "override text must be injected even when include_profile=False"
+    assert ov4[0].data.get("agent_name") == "", \
+        "override path must not leak the profile name"
+
+    return {
+        "agent_name": view.data.get("agent_name"),
+        "linked_to_message": ctx_rels[0].target == msg_id,
+        "suppressed_when_disabled": True,
+        "override_injected": True,
+        "override_wins_over_disabled_profile": True,
+    }
+
+
 def run_all() -> bool:
     print("=" * 60)
     print("Chat Adapter Pack Fixtures")
@@ -299,6 +413,17 @@ def run_all() -> bool:
     try:
         result = run_bounded_context_fixture()
         print(f"  PASS: contexts={result['contexts']}, bounded_to={result['bounded_to']}")
+    except AssertionError as e:
+        print(f"  FAIL: {e}")
+        all_pass = False
+
+    print("\n[5] self-knowledge (who are you? — agent_profile wiring) fixture")
+    try:
+        result = run_self_knowledge_fixture()
+        print(f"  PASS: agent_name={result['agent_name']!r}, "
+              f"linked_to_message={result['linked_to_message']}, "
+              f"suppressed_when_disabled={result['suppressed_when_disabled']}, "
+              f"override_injected={result['override_injected']}")
     except AssertionError as e:
         print(f"  FAIL: {e}")
         all_pass = False

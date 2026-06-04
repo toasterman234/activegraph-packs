@@ -85,6 +85,37 @@ AgentProfileSettings(
 
 ---
 
+## Programmatic helpers (synchronous assembly)
+
+The event-driven `profile_context_request → profile_context_view` flow is the right
+pattern when the requester and reader are in **different** behavior cascades. When a
+caller needs the view **within the same cascade** (e.g. the Chat Pack assembles the
+assistant's identity in a behavior that runs just before the LLM responder), the
+round-trip is too slow — the view would land in a later batch. For that case the pack
+exposes a pure helper that builds the same view synchronously:
+
+```python
+from packs.agent_profile.behaviors import assemble_profile_view
+
+view = assemble_profile_view(
+    graph,
+    settings=AgentProfileSettings(),
+    profile_id=None,          # None → default profile (settings.default_profile_id or sole profile)
+    channel="chat",
+    audience_role="owner",
+)                              # returns Optional[ProfileContextView]; None if no profile exists
+```
+
+`assemble_profile_view` and `profile_context_provider` share the same private core
+(`_build_profile_context_view`), so the synchronous and event-driven paths produce
+identical views — there is no second implementation to drift.
+
+`rebuild_profile_registry(graph) -> int` repopulates the in-memory registry from
+graph objects (via `graph.all_objects()`). Call it after `Runtime.load(...)` resumes
+a persisted store: replay recreates the profile objects but does **not** re-fire the
+recorder behaviors, so the registry would otherwise be empty. Mirrors
+`identity_auth.rebuild_principal_registry`.
+
 ## Registry Pattern
 
 Context assembly uses a **local in-memory registry** (module-level dict) populated by recorder behaviors. This avoids `graph.objects()` calls in behaviors, which are unsafe in the ActiveGraph behavior context.

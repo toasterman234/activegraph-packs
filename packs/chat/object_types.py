@@ -219,12 +219,20 @@ RELATION_TYPES = [
     ),
     RelationType(
         name="provides_context_for",
-        source_types=("chat_context",),
+        # chat_context carries conversation memory; profile_context_view (owned by
+        # the Agent Profile Pack) carries the assistant's identity/mission. Both
+        # attach to the inbound message through this one edge so chat_llm_responder's
+        # depth-1 view captures them without widening its scope. Naming an Agent
+        # Profile type here is a string-only reference — it is validated lazily at
+        # add_relation time, so the Chat Pack still loads standalone (without
+        # agent_profile), in which case no profile_context_view is ever created.
+        source_types=("chat_context", "profile_context_view"),
         target_types=("comm_message",),
         description=(
-            "A ChatContext provides conversation memory for an inbound CommMessage. "
-            "This edge lets chat_llm_responder's depth-1 view capture the context "
-            "without widening its scope."
+            "A context object (ChatContext memory or ProfileContextView identity) "
+            "provides context for an inbound CommMessage. This edge lets "
+            "chat_llm_responder's depth-1 view capture the context without "
+            "widening its scope."
         ),
     ),
 ]

@@ -95,6 +95,52 @@ the session and its turns. That is simpler, but it pulls *every* turn (no
 about what context was used. See the long comment on `chat_context_assembler` in
 `behaviors.py` for the full trade-off.
 
+## Self-knowledge ("who are you?" / "what's your mission?")
+
+When the **Agent Profile Pack** is loaded, the assistant can answer questions about
+itself without any new pack or special-cased prompt. The mechanism reuses the same
+"inject a context view, let the responder serialize it" seam as conversation memory:
+
+```
+comm_message.created [channel=chat, direction=inbound]
+  → chat_profile_context                   (runs BEFORE chat_llm_responder)
+      if system_prompt_override is set:
+        injects a profile_context_view carrying ONLY that override text
+        (metadata.origin=system_prompt_override) and skips the profile
+      elif include_profile:
+        assembles a profile_context_view from the default AgentProfile
+        (name, mission, goals, standing instructions, personality)
+      relations: provides_context_for (profile_context_view → comm_message)
+```
+
+Because the view is linked to the inbound message, `chat_llm_responder`'s existing
+depth-1 view captures it and the runtime serializes the identity into the prompt —
+the model then answers "who are you?" / "what's your mission?" in its own words. No
+hardcoded answers, no intent classifier, no dedicated Q&A behavior.
+
+**Precedence.** `system_prompt_override` and `include_profile` are independent knobs;
+the override is the more specific, intentional setting, so it wins: an override (if
+set) is always injected — even when `include_profile=False`. With no override,
+`include_profile=True` injects the profile and `include_profile=False` injects
+nothing (the responder falls back to its static system prompt).
+
+**Zero-config default.** `build_assistant(...)` seeds a single default `AgentProfile`
+(from `AgentProfileSettings`) when the store has none, so a brand-new assistant can
+describe itself out of the box. Pass `seed_profile=False` to opt out. On a resumed
+(persisted) runtime, the profile is rebuilt from replayed objects and seeded if the
+store predates this feature — see `demo_server._build_runtime`.
+
+**Design notes (for OSS readers).** This is deliberately minimal and unopinionated:
+- It does **not** add a new object type or pack — it reuses `agent_profile`'s
+  `ProfileContextView` and the chat responder's depth-1 view.
+- `chat_profile_context` imports `agent_profile` lazily and no-ops if the pack
+  isn't loaded, so the Chat Pack keeps zero hard dependency on it.
+- The profile view is assembled **synchronously** in the behavior (not via a
+  request→view event round-trip) because the responder fires in the same cascade;
+  an event-driven view would arrive too late for the same batch.
+- Alternatives considered (single static system prompt, a dedicated identity
+  behavior, widening the responder view) are documented inline in `behaviors.py`.
+
 ## Session Continuity
 
 `chat_ingester` resolves the session graph-first, so continuity is restart-safe:
@@ -166,7 +212,7 @@ for t in turns:
 - **Core Pack** (required): source creation
 - **Communication Pack** (required): CommMessage, CommThread, intent_detector, thread_tracker
 - **Identity Pack** (optional): source.sender_ref triggers principal_resolver
-- **Agent Profile Pack** (optional): ProfileContextView in LLM context when `include_profile=True`
+- **Agent Profile Pack** (optional): ProfileContextView in LLM context when `include_profile=True`; powers self-knowledge ("who are you?") via `chat_profile_context` (see above)
 - **Memory Gateway Pack** (optional): memory retrieval when `include_memory=True`
 
 ## Notes
