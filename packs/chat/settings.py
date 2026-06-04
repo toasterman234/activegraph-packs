@@ -82,6 +82,28 @@ class ChatSettings(BaseModel):
             "be recalled. Lower = more recall, higher = more precision. Default: 0.1."
         ),
     )
+    memory_subject_scoped: bool = Field(
+        default=True,
+        description=(
+            "When True (default), chat_memory_context only recalls memories whose "
+            "subject_ref matches the message sender. This is an access-control "
+            "boundary: it prevents one user from receiving another user's stored "
+            "memories in a multi-user deployment. Set False ONLY to opt into "
+            "shared/global recall where every user sees every memory (e.g. a "
+            "single-user assistant)."
+        ),
+    )
+    memory_include_global: bool = Field(
+        default=False,
+        description=(
+            "When subject-scoped recall is on, controls whether subject-less "
+            "(NULL) 'global' memories are ALSO recalled alongside the sender's "
+            "own. Default False = strict per-user isolation: only the sender's "
+            "own memories are returned, so untagged or legacy NULL rows can never "
+            "leak across users. Set True to also surface shared/global facts to "
+            "every user. Ignored when memory_subject_scoped is False."
+        ),
+    )
     include_profile: bool = Field(
         default=True,
         description=(

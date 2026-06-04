@@ -25,6 +25,9 @@ def retrieve_memories_fn(
     behavior_name: Optional[str] = None,
     frame_id: Optional[str] = None,
     backend_url: str = ":memory:",
+    subject_ref: Optional[str] = None,
+    subject_scoped: bool = False,
+    include_global: bool = True,
 ) -> list[dict[str, Any]]:
     """Query the memory backend and return ranked results.
 
@@ -36,6 +39,13 @@ def retrieve_memories_fn(
         behavior_name: Caller behavior name (for audit)
         frame_id: Optional frame scope
         backend_url: Backend database URL (default: in-memory SQLite)
+        subject_ref: The user/subject the query is on behalf of
+        subject_scoped: When True, only return memories for subject_ref — an
+            access-control boundary that prevents recalling another user's
+            memories. Default False (global recall).
+        include_global: When subject_scoped, also include subject-less (NULL)
+            "global" memories. True (default) for backward compatibility; pass
+            False for strict per-user isolation (no shared/legacy NULL rows).
 
     Returns:
         List of dicts sorted by score descending:
@@ -49,6 +59,9 @@ def retrieve_memories_fn(
         top_k=top_k,
         min_score=min_score,
         category=category,
+        subject_ref=subject_ref,
+        subject_scoped=subject_scoped,
+        include_global=include_global,
     )
 
     # Update retrieval stats for returned items
@@ -80,6 +93,9 @@ def retrieve_memories(
     behavior_name: Optional[str] = None,
     frame_id: Optional[str] = None,
     backend_url: str = ":memory:",
+    subject_ref: Optional[str] = None,
+    subject_scoped: bool = False,
+    include_global: bool = True,
 ) -> list[dict[str, Any]]:
     """Registered tool wrapper — delegates to retrieve_memories_fn."""
     return retrieve_memories_fn(
@@ -90,6 +106,9 @@ def retrieve_memories(
         behavior_name=behavior_name,
         frame_id=frame_id,
         backend_url=backend_url,
+        subject_ref=subject_ref,
+        subject_scoped=subject_scoped,
+        include_global=include_global,
     )
 
 

@@ -186,6 +186,12 @@ The demo server also loads all fixture data on startup — `POST /reset` re-seed
 
 ---
 
+## Guides
+
+- **[docs/long-term-memory.md](docs/long-term-memory.md)** — Conversation-driven long-term memory: how the assistant builds and recalls durable, cross-session, per-user memory with no LLM or API key, and the swappable seams for write-path ingestion, the storage backend (e.g. mem0), and embedding-based retrieval.
+
+---
+
 ## Reports
 
 - **[activegraph-builder-report.md](activegraph-builder-report.md)** — Honest field report from building this repo: what clicked, what didn't, rough edges in the ActiveGraph API, and notes for the ActiveGraph maintainers. Includes the confusing relation field naming, re-entrancy footgun, `@tool` callability issue, and a correction on the built-in persistence layer.

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from typing import Optional
 
 from activegraph.packs import behavior
 
@@ -57,6 +58,27 @@ def _jaccard(a: str, b: str) -> float:
     if not wa or not wb:
         return 0.0
     return len(wa & wb) / len(wa | wb)
+
+
+def _derive_subject_ref(graph, source_ids) -> Optional[str]:
+    """Resolve the originating subject (user) from a candidate's source objects.
+
+    Memory candidates from the generic Core path don't carry a subject_ref, but
+    they DO reference the `source` object the memory came from, and that source
+    carries the originating `sender_ref`. Returns the first sender_ref found, or
+    None when no source resolves to an author (a genuinely subject-less memory).
+    """
+    for sid in source_ids or []:
+        try:
+            src = graph.get_object(sid)
+        except Exception:
+            continue
+        if not src:
+            continue
+        sender = (getattr(src, "data", None) or {}).get("sender_ref")
+        if sender:
+            return sender
+    return None
 
 
 # ------------------------------------------------------------------ behaviors
@@ -185,16 +207,36 @@ def memory_writer(event, graph, ctx, *, settings: MemoryGatewaySettings):
     candidate_data = candidate.data
     now = datetime.now(timezone.utc).isoformat()
     text = candidate_data.get("text", "")
+    subject_ref = candidate_data.get("subject_ref")
+
+    # Access control: an untagged candidate (subject_ref missing) must NOT become
+    # a global, all-users-can-recall memory just because its proposer didn't set a
+    # subject — that re-opens the cross-user leak. Core's generic source→
+    # observation→candidate path never sets subject_ref, so derive it from the
+    # candidate's source object(s), which carry the originating sender_ref. Only a
+    # candidate with no resolvable author stays subject-less (genuinely global).
+    if subject_ref is None:
+        subject_ref = _derive_subject_ref(graph, candidate_data.get("source_ids", []))
 
     backend = get_backend(settings.backend_url)
 
     # Dedup: a single chat message can produce the same candidate twice — once
     # from Core's generic source→observation→candidate path and once from the
     # chat heuristic write-path. Collapse them: if an item with this exact
-    # (normalized) text already exists, link the candidate to it and skip the
-    # duplicate write instead of storing the statement twice.
-    existing_id = backend.find_by_text(text)
+    # (normalized) text already exists in the SAME subject scope, link the
+    # candidate to it and skip the duplicate write. Dedup is subject-scoped so
+    # two DIFFERENT users stating the same sentence keep separate memories.
+    existing_id = backend.find_by_text(text, subject_ref=subject_ref)
     if existing_id:
+        # If the surviving item is subject-less but THIS candidate knows the
+        # subject (e.g. Core's subject-less candidate landed first, then the
+        # chat candidate), upgrade the item's scope so recall stays isolated.
+        if subject_ref is not None and backend.get_subject(existing_id) is None:
+            try:
+                backend.set_subject(existing_id, subject_ref)
+                graph.patch_object(existing_id, {"subject_ref": subject_ref})
+            except Exception:
+                pass
         try:
             graph.add_relation("accepted_as", subject_id, existing_id)
         except Exception:
@@ -212,7 +254,7 @@ def memory_writer(event, graph, ctx, *, settings: MemoryGatewaySettings):
             created_at=now,
             last_retrieved_at=None,
             retrieval_count=0,
-            subject_ref=candidate_data.get("subject_ref"),
+            subject_ref=subject_ref,
         ).model_dump(),
     )
 
@@ -223,6 +265,7 @@ def memory_writer(event, graph, ctx, *, settings: MemoryGatewaySettings):
         category=candidate_data.get("category"),
         confidence=candidate_data.get("confidence", 0.7),
         metadata={"candidate_id": subject_id, "created_at": now},
+        subject_ref=subject_ref,
     )
 
     # Enforce max_items limit

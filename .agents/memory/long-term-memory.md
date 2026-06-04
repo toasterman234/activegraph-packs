@@ -55,3 +55,24 @@ dedups by normalized text via `find_by_text` before creating an item. Note Core
 still stores a *question* containing a preference keyword (e.g. "what are my dark
 mode preferences?" → category preference) as its own item — that's pre-existing
 Core extraction, not a dedup failure.
+
+# Memory recall IS an access-control boundary (multi-user)
+
+Recalled memory is folded straight into the LLM prompt, so unscoped recall is a
+cross-user data leak — code review BLOCKED twice on this. Two-part fix:
+- **Tag every write with its author** (`subject_ref`). The heuristic proposer
+  sets it from `sender_ref`; Core's generic path does NOT, so `memory_writer`
+  derives it from the candidate's `source` object (which carries `sender_ref`)
+  when missing. Only a truly authorless candidate stays NULL/global.
+- **Scope every read to the sender**: `retrieve_by_query(subject_ref, subject_scoped,
+  include_global)`. Chat defaults `memory_subject_scoped=True` +
+  `memory_include_global=False` → STRICT (own memories only); legacy/untagged NULL
+  rows never leak. `include_global=True` re-adds shared NULL "global" facts.
+
+**Why:** the first fix attempt only scoped the read but left a NULL-wildcard hole —
+Core-only/untagged memories (NULL subject) were still recallable by everyone.
+Tagging at write time AND a strict read default are both required.
+
+**Gotcha:** the `source` object type has a STRICT schema — you can't hand-build one
+with `graph.add_object("source", {...})` in tests. Create a real source via
+`submit_chat_input_fn(...)` and reference its id instead.

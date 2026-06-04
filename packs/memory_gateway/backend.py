@@ -211,15 +211,20 @@ class SqliteMemoryBackend:
                 created_at TEXT,
                 last_retrieved_at TEXT,
                 retrieval_count INTEGER DEFAULT 0,
-                embedding TEXT
+                embedding TEXT,
+                subject_ref TEXT
             )
         """)
-        # Migration-safe: a DB file written by an older version has no
-        # `embedding` column. Add it lazily so persisted stores keep working
-        # (and survive the restart that the cross-session fixtures rely on).
+        # Migration-safe: a DB file written by an older version may lack the
+        # `embedding` and/or `subject_ref` columns. Add them lazily so persisted
+        # stores keep working (and survive the restart cross-session fixtures
+        # rely on). subject_ref scopes a memory to the user it is about, so
+        # recall can isolate one user's memories from another's.
         cols = {row[1] for row in self._conn.execute("PRAGMA table_info(memory_items)")}
         if "embedding" not in cols:
             self._conn.execute("ALTER TABLE memory_items ADD COLUMN embedding TEXT")
+        if "subject_ref" not in cols:
+            self._conn.execute("ALTER TABLE memory_items ADD COLUMN subject_ref TEXT")
         self._conn.commit()
 
     def store_item(
@@ -229,13 +234,18 @@ class SqliteMemoryBackend:
         category: Optional[str] = None,
         confidence: float = 0.7,
         metadata: Optional[dict] = None,
+        subject_ref: Optional[str] = None,
     ):
         """Store a new MemoryItem in the backend.
 
         If an embedder is registered, the item is embedded at write time and the
         vector persisted alongside it ("behavior-triggered embedding": this runs
         inside memory_writer). With no embedder the embedding column stays NULL
-        and retrieval is purely lexical."""
+        and retrieval is purely lexical.
+
+        ``subject_ref`` scopes the memory to the user it is about (NULL = a
+        subject-less / global memory). retrieve_by_query uses it to isolate one
+        user's memories from another's."""
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
 
@@ -246,28 +256,62 @@ class SqliteMemoryBackend:
             """
             INSERT OR REPLACE INTO memory_items
                 (item_id, text, category, confidence, metadata, created_at,
-                 last_retrieved_at, retrieval_count, embedding)
-            VALUES (?, ?, ?, ?, ?, ?, NULL, 0, ?)
+                 last_retrieved_at, retrieval_count, embedding, subject_ref)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, 0, ?, ?)
             """,
             (item_id, text, category, confidence, json.dumps(metadata or {}),
-             now, embedding_json),
+             now, embedding_json, subject_ref),
         )
         self._conn.commit()
 
-    def find_by_text(self, text: str) -> Optional[str]:
+    def find_by_text(
+        self, text: str, subject_ref: Optional[str] = None
+    ) -> Optional[str]:
         """Return the item_id of an existing memory whose normalized text matches
-        *text*, or None. Used by the write path to avoid storing the same
-        statement twice when multiple proposers (Core + chat heuristic) fire on
-        the same message."""
+        *text* within the same subject scope, or None.
+
+        Used by the write path to avoid storing the same statement twice when
+        multiple proposers (Core + chat heuristic) fire on the same message.
+        A stored item matches when its normalized text is equal AND it is in the
+        same subject scope: same subject_ref, or EITHER side is NULL (so a
+        subject-less Core candidate and a subject-scoped chat candidate for the
+        same message still collapse, while two DIFFERENT users stating the same
+        sentence stay separate)."""
         target = _normalize_text(text)
         if not target:
             return None
-        for item_id, existing in self._conn.execute(
-            "SELECT item_id, text FROM memory_items"
+        for item_id, existing, existing_subj in self._conn.execute(
+            "SELECT item_id, text, subject_ref FROM memory_items"
         ):
-            if _normalize_text(existing) == target:
+            if _normalize_text(existing) != target:
+                continue
+            if (
+                existing_subj == subject_ref
+                or existing_subj is None
+                or subject_ref is None
+            ):
                 return item_id
         return None
+
+    def set_subject(self, item_id: str, subject_ref: Optional[str]) -> None:
+        """Set/upgrade an item's subject_ref.
+
+        Used by the write path to promote a subject-less item to a scoped one
+        once a later (subject-bearing) duplicate candidate for the same message
+        is collapsed into it — so the final stored memory is correctly scoped
+        regardless of which proposer fired first."""
+        self._conn.execute(
+            "UPDATE memory_items SET subject_ref = ? WHERE item_id = ?",
+            (subject_ref, item_id),
+        )
+        self._conn.commit()
+
+    def get_subject(self, item_id: str) -> Optional[str]:
+        """Return the stored subject_ref for *item_id*, or None."""
+        row = self._conn.execute(
+            "SELECT subject_ref FROM memory_items WHERE item_id = ?", (item_id,)
+        ).fetchone()
+        return row[0] if row else None
 
     def retrieve_by_query(
         self,
@@ -275,6 +319,9 @@ class SqliteMemoryBackend:
         top_k: int = 10,
         min_score: float = 0.2,
         category: Optional[str] = None,
+        subject_ref: Optional[str] = None,
+        subject_scoped: bool = False,
+        include_global: bool = True,
     ) -> list[dict[str, Any]]:
         """Retrieve MemoryItems ranked by similarity to *query*.
 
@@ -285,14 +332,40 @@ class SqliteMemoryBackend:
         and for the whole query if embedding the query fails — recall never
         errors just because embeddings are misconfigured.
 
+        Access control: when ``subject_scoped`` is True, only items whose
+        subject_ref equals ``subject_ref`` are returned, so a caller acting for
+        one user never sees another user's memories. ``include_global`` controls
+        whether subject-less (NULL) memories — intended as shared/global facts —
+        are ALSO returned: True (default) folds them in, False restricts recall
+        strictly to the caller's own memories (the secure default for the chat
+        read path, where untagged/legacy NULL rows would otherwise be readable by
+        everyone). When ``subject_scoped`` is False, no subject filter is applied
+        — for single-user/global callers and backward compatibility.
+
         Returns a list of dicts with: item_id, text, score, category, confidence.
         Sorted by score descending, limited to top_k.
         """
-        cursor = self._conn.execute(
-            "SELECT item_id, text, category, confidence, embedding FROM memory_items"
-            + (" WHERE category = ?" if category else ""),
-            (category,) if category else (),
-        )
+        where = []
+        params: list[Any] = []
+        if category:
+            where.append("category = ?")
+            params.append(category)
+        if subject_scoped:
+            # The caller's own memories always match. `subject_ref = NULL` is
+            # never true in SQL, so an anonymous caller (subject_ref None) falls
+            # through to the global clause below (or nothing, if globals excluded).
+            if include_global:
+                # NULL subject = global memory, visible to everyone.
+                where.append("(subject_ref = ? OR subject_ref IS NULL)")
+                params.append(subject_ref)
+            else:
+                # Strict isolation: only the caller's own (non-NULL) memories.
+                where.append("subject_ref = ?")
+                params.append(subject_ref)
+        sql = "SELECT item_id, text, category, confidence, embedding FROM memory_items"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        cursor = self._conn.execute(sql, tuple(params))
         rows = cursor.fetchall()
 
         # Try to embed the query once; None → lexical for the whole query.

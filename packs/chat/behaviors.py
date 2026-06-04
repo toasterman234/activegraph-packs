@@ -642,6 +642,13 @@ def chat_memory_context(event, graph, ctx, *, settings: ChatSettings):
     except Exception:
         return
 
+    # Access control: by default recall is scoped to the message SENDER, so one
+    # user never receives another user's stored memories (a returned memory_context
+    # is folded straight into the prompt — unscoped recall would be a cross-user
+    # data leak). The sender identity is the same value the write path tags
+    # memories with (sender_ref → memory subject_ref). Set
+    # ChatSettings.memory_subject_scoped=False to opt into shared/global recall.
+    sender_ref = data.get("sender_ref")
     try:
         results = retrieve_memories_fn(
             query=query,
@@ -650,6 +657,9 @@ def chat_memory_context(event, graph, ctx, *, settings: ChatSettings):
             behavior_name="chat_memory_context",
             frame_id=frame_id,
             backend_url=settings.memory_backend_url,
+            subject_ref=sender_ref,
+            subject_scoped=settings.memory_subject_scoped,
+            include_global=settings.memory_include_global,
         )
     except Exception:
         return  # Recall must never break the response.

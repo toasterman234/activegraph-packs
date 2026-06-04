@@ -85,6 +85,31 @@ It is bounded and configurable via `ChatSettings`:
 | `memory_backend_url` | `":memory:"` | Backend to recall from — **must match** `MemoryGatewaySettings.backend_url`. |
 | `memory_top_k` | `3` | Max memories folded into the prompt. |
 | `memory_min_score` | `0.1` | Minimum similarity score to recall. |
+| `memory_subject_scoped` | `True` | Recall only the message sender's own memories (see below). |
+| `memory_include_global` | `False` | When subject-scoped, also recall subject-less "global" memories. |
+
+### Multi-user isolation (subject scoping)
+
+Recalled memory is folded straight into the LLM prompt, so **recall is an
+access-control boundary**: in a multi-user deployment one user must never receive
+another user's memories. Two mechanisms enforce this:
+
+- **Writes are tagged with their author.** Every memory carries a `subject_ref`
+  (the originating `sender_ref`). The heuristic write path sets it directly; for
+  candidates from Core's generic extraction path (which don't set it),
+  `memory_writer` derives it from the candidate's source object. A memory with no
+  resolvable author stays subject-less (genuinely global).
+- **Reads are scoped to the sender.** With `memory_subject_scoped=True` (default),
+  `chat_memory_context` passes the inbound message's `sender_ref` and only recalls
+  memories tagged for that user. `memory_include_global=False` (default) keeps
+  recall **strict** — only the sender's own memories — so untagged or legacy
+  subject-less rows can never leak across users. Set `memory_include_global=True`
+  to also surface shared/global facts to everyone, or `memory_subject_scoped=False`
+  for a single-user assistant where every memory is shared.
+
+At the backend, `retrieve_by_query(subject_ref=…, subject_scoped=True,
+include_global=…)` applies the same filter, so alternative read paths inherit the
+boundary.
 
 ### Persistence across sessions
 
