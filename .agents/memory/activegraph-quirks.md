@@ -25,3 +25,6 @@ The `BEHAVIORS = [...]` list order is the order behaviors run. Any behavior that
 must produce a `*_context` object the LLM responder folds into its prompt (e.g.
 chat ChatContext / ProfileContextView / MemoryContext) MUST be listed BEFORE the
 responder, or the context arrives a turn too late.
+
+## UI logs are derived client-side from /trace
+The api-server only proxies whole-collection GETs (/trace, /graph, /packs, /frames, /summary). There are NO per-object or per-behavior log endpoints. Any "logs for object X" or "logs for behavior Y" UI must fetch /trace and filter client-side by `object_id` / `behavior_name`. /trace is windowed (default limit 200, demo caps via `limit` param) so such views show only the latest N events, not full history — label them accordingly.

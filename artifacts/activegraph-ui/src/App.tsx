@@ -5,6 +5,9 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Layout } from "@/components/layout";
 import Dashboard from "@/pages/dashboard";
 import Graph from "@/pages/graph";
+import Objects from "@/pages/objects";
+import ObjectDetail from "@/pages/object-detail";
+import BehaviorDetail from "@/pages/behavior-detail";
 import Trace from "@/pages/trace";
 import Packs from "@/pages/packs";
 import Frames from "@/pages/frames";
@@ -21,6 +24,9 @@ function Router() {
       <Switch>
         <Route path="/" component={Dashboard} />
         <Route path="/graph" component={Graph} />
+        <Route path="/objects" component={Objects} />
+        <Route path="/objects/:id" component={ObjectDetail} />
+        <Route path="/behaviors/:name" component={BehaviorDetail} />
         <Route path="/trace" component={Trace} />
         <Route path="/packs" component={Packs} />
         <Route path="/frames" component={Frames} />

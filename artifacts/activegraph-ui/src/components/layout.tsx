@@ -1,12 +1,13 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { Activity, Box, ListTree, Package, LayoutDashboard, MessageSquare, KeyRound, UserCog, Menu } from "lucide-react";
+import { Activity, Box, Boxes, ListTree, Package, LayoutDashboard, MessageSquare, KeyRound, UserCog, Menu } from "lucide-react";
 import { useHealthCheck } from "@workspace/api-client-react";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/graph", label: "Graph", icon: Box },
+  { href: "/objects", label: "Objects", icon: Boxes },
   { href: "/trace", label: "Trace", icon: Activity },
   { href: "/packs", label: "Packs", icon: Package },
   { href: "/frames", label: "Frames", icon: ListTree },
