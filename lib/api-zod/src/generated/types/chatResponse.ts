@@ -10,6 +10,12 @@ export interface ChatResponse {
   content: string;
   frame_id: string;
   user_message?: string;
+  /** @nullable */
+  session_id?: string | null;
+  /** @nullable */
+  turn_id?: string | null;
+  /** @nullable */
+  llm_mode?: string | null;
   event_count?: number;
   new_objects?: string[];
 }

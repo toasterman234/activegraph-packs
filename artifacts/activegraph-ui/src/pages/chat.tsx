@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { useSendChat, getGetTraceQueryKey, getGetGraphQueryKey } from "@workspace/api-client-react";
+import { useSendChat, useGetChatConfig, getGetChatConfigQueryKey, getGetTraceQueryKey, getGetGraphQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { Link } from "wouter";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Bot, User } from "lucide-react";
+import { Send, Bot, User, ShieldAlert } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 type Message = {
@@ -19,8 +20,12 @@ export default function Chat() {
   const [input, setInput] = useState("");
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  
+
   const sendChat = useSendChat();
+  const { data: config } = useGetChatConfig({
+    query: { refetchInterval: 15000, queryKey: getGetChatConfigQueryKey() },
+  });
+  const isMock = config?.mode !== "live";
 
   const handleSend = () => {
     if (!input.trim() || sendChat.isPending) return;
@@ -53,6 +58,18 @@ export default function Chat() {
         <h1 className="text-lg font-mono font-bold text-primary">RUNTIME_INTERFACE</h1>
         <p className="text-xs font-mono text-muted-foreground">Interact directly with the ActiveGraph execution loop</p>
       </div>
+
+      {isMock && (
+        <Link href="/secrets">
+          <div className="flex items-start gap-2 px-4 py-2 border-b border-yellow-500/40 bg-yellow-500/5 text-yellow-400 font-mono text-xs cursor-pointer hover:bg-yellow-500/10">
+            <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>
+              MOCK_LLM active — replies are canned. The full pipeline runs, but no model is wired.
+              Add a provider key on the <span className="underline">Secrets</span> page to go live.
+            </span>
+          </div>
+        </Link>
+      )}
 
       <ScrollArea className="flex-1 p-4">
         <div className="space-y-6">

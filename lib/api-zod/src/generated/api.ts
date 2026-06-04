@@ -178,6 +178,9 @@ export const SendChatResponse = zod.object({
   "content": zod.string(),
   "frame_id": zod.string(),
   "user_message": zod.string().optional(),
+  "session_id": zod.string().nullish(),
+  "turn_id": zod.string().nullish(),
+  "llm_mode": zod.string().nullish(),
   "event_count": zod.number().optional(),
   "new_objects": zod.array(zod.string()).optional()
 })
@@ -190,6 +193,113 @@ export const SendChatResponse = zod.object({
 export const ResetRuntimeResponse = zod.object({
   "success": zod.boolean(),
   "message": zod.string()
+})
+
+
+/**
+ * Returns the resolved chat LLM mode (mock/live), provider, model, and per-provider key presence. No secret values.
+ * @summary Get chat LLM config
+ */
+export const GetChatConfigResponse = zod.object({
+  "mode": zod.string().describe('mock or live'),
+  "provider": zod.string().nullish(),
+  "model": zod.string().nullish(),
+  "key_present": zod.boolean(),
+  "providers": zod.array(zod.object({
+  "id": zod.string(),
+  "label": zod.string(),
+  "key_env": zod.string(),
+  "key_present": zod.boolean()
+}))
+})
+
+
+/**
+ * Selects the chat provider and/or model (non-secret prefs) and hot-swaps the live provider. Secret values are set via /activegraph/secrets.
+ * @summary Update chat LLM config
+ */
+export const UpdateChatConfigBody = zod.object({
+  "provider": zod.string().nullish().describe('Provider id (openai, anthropic) or empty to auto-detect'),
+  "model": zod.string().nullish().describe('Model name; empty to use provider default')
+})
+
+export const UpdateChatConfigResponse = zod.object({
+  "mode": zod.string().describe('mock or live'),
+  "provider": zod.string().nullish(),
+  "model": zod.string().nullish(),
+  "key_present": zod.boolean(),
+  "providers": zod.array(zod.object({
+  "id": zod.string(),
+  "label": zod.string(),
+  "key_env": zod.string(),
+  "key_present": zod.boolean()
+}))
+})
+
+
+/**
+ * Lists name-only credential references and whether each value is currently present in-process. Secret values are never returned.
+ * @summary List registered secrets
+ */
+export const ListSecretsResponse = zod.object({
+  "credentials": zod.array(zod.object({
+  "id": zod.string().nullish(),
+  "name": zod.string(),
+  "provider_hint": zod.string().nullish(),
+  "scope": zod.string().nullish(),
+  "value_present": zod.boolean(),
+  "last_used_at": zod.string().nullish(),
+  "use_count": zod.number().optional()
+})),
+  "total": zod.number(),
+  "chat_config": zod.object({
+  "mode": zod.string().describe('mock or live'),
+  "provider": zod.string().nullish(),
+  "model": zod.string().nullish(),
+  "key_present": zod.boolean(),
+  "providers": zod.array(zod.object({
+  "id": zod.string(),
+  "label": zod.string(),
+  "key_env": zod.string(),
+  "key_present": zod.boolean()
+}))
+}).optional()
+})
+
+
+/**
+ * Registers a secret by name and sets its value for in-process use only. The value is never written to the graph, event log, disk, or response. May upgrade chat to a live LLM.
+ * @summary Set a secret
+ */
+export const SetSecretBody = zod.object({
+  "name": zod.string().describe('Credential \/ env var name, e.g. OPENAI_API_KEY'),
+  "value": zod.string().describe('Secret value — used in-process only, never persisted'),
+  "provider_hint": zod.string().nullish()
+})
+
+export const SetSecretResponse = zod.object({
+  "credentials": zod.array(zod.object({
+  "id": zod.string().nullish(),
+  "name": zod.string(),
+  "provider_hint": zod.string().nullish(),
+  "scope": zod.string().nullish(),
+  "value_present": zod.boolean(),
+  "last_used_at": zod.string().nullish(),
+  "use_count": zod.number().optional()
+})),
+  "total": zod.number(),
+  "chat_config": zod.object({
+  "mode": zod.string().describe('mock or live'),
+  "provider": zod.string().nullish(),
+  "model": zod.string().nullish(),
+  "key_present": zod.boolean(),
+  "providers": zod.array(zod.object({
+  "id": zod.string(),
+  "label": zod.string(),
+  "key_env": zod.string(),
+  "key_present": zod.boolean()
+}))
+}).optional()
 })
 
 

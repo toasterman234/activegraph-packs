@@ -20,6 +20,8 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  ChatConfig,
+  ChatConfigInput,
   ChatMessageInput,
   ChatResponse,
   ErrorResponse,
@@ -30,6 +32,8 @@ import type {
   HealthStatus,
   PacksResponse,
   ResetResponse,
+  SecretInput,
+  SecretsResponse,
   SummaryResponse,
   TraceResponse
 } from './api.schemas';
@@ -669,5 +673,305 @@ export const useResetRuntime = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getResetRuntimeMutationOptions(options));
+    }
+
+export const getGetChatConfigUrl = () => {
+
+
+
+
+  return `/api/activegraph/chat/config`
+}
+
+/**
+ * Returns the resolved chat LLM mode (mock/live), provider, model, and per-provider key presence. No secret values.
+ * @summary Get chat LLM config
+ */
+export const getChatConfig = async ( options?: RequestInit): Promise<ChatConfig> => {
+
+  return customFetch<ChatConfig>(getGetChatConfigUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetChatConfigQueryKey = () => {
+    return [
+    `/api/activegraph/chat/config`
+    ] as const;
+    }
+
+
+export const getGetChatConfigQueryOptions = <TData = Awaited<ReturnType<typeof getChatConfig>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getChatConfig>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetChatConfigQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getChatConfig>>> = ({ signal }) => getChatConfig({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getChatConfig>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetChatConfigQueryResult = NonNullable<Awaited<ReturnType<typeof getChatConfig>>>
+export type GetChatConfigQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get chat LLM config
+ */
+
+export function useGetChatConfig<TData = Awaited<ReturnType<typeof getChatConfig>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getChatConfig>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetChatConfigQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getUpdateChatConfigUrl = () => {
+
+
+
+
+  return `/api/activegraph/chat/config`
+}
+
+/**
+ * Selects the chat provider and/or model (non-secret prefs) and hot-swaps the live provider. Secret values are set via /activegraph/secrets.
+ * @summary Update chat LLM config
+ */
+export const updateChatConfig = async (chatConfigInput: ChatConfigInput, options?: RequestInit): Promise<ChatConfig> => {
+
+  return customFetch<ChatConfig>(getUpdateChatConfigUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      chatConfigInput,)
+  }
+);}
+
+
+
+
+export const getUpdateChatConfigMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateChatConfig>>, TError,{data: BodyType<ChatConfigInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateChatConfig>>, TError,{data: BodyType<ChatConfigInput>}, TContext> => {
+
+const mutationKey = ['updateChatConfig'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateChatConfig>>, {data: BodyType<ChatConfigInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateChatConfig(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateChatConfigMutationResult = NonNullable<Awaited<ReturnType<typeof updateChatConfig>>>
+    export type UpdateChatConfigMutationBody = BodyType<ChatConfigInput>
+    export type UpdateChatConfigMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Update chat LLM config
+ */
+export const useUpdateChatConfig = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateChatConfig>>, TError,{data: BodyType<ChatConfigInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateChatConfig>>,
+        TError,
+        {data: BodyType<ChatConfigInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateChatConfigMutationOptions(options));
+    }
+
+export const getListSecretsUrl = () => {
+
+
+
+
+  return `/api/activegraph/secrets`
+}
+
+/**
+ * Lists name-only credential references and whether each value is currently present in-process. Secret values are never returned.
+ * @summary List registered secrets
+ */
+export const listSecrets = async ( options?: RequestInit): Promise<SecretsResponse> => {
+
+  return customFetch<SecretsResponse>(getListSecretsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListSecretsQueryKey = () => {
+    return [
+    `/api/activegraph/secrets`
+    ] as const;
+    }
+
+
+export const getListSecretsQueryOptions = <TData = Awaited<ReturnType<typeof listSecrets>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSecrets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListSecretsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSecrets>>> = ({ signal }) => listSecrets({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listSecrets>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListSecretsQueryResult = NonNullable<Awaited<ReturnType<typeof listSecrets>>>
+export type ListSecretsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List registered secrets
+ */
+
+export function useListSecrets<TData = Awaited<ReturnType<typeof listSecrets>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSecrets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListSecretsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getSetSecretUrl = () => {
+
+
+
+
+  return `/api/activegraph/secrets`
+}
+
+/**
+ * Registers a secret by name and sets its value for in-process use only. The value is never written to the graph, event log, disk, or response. May upgrade chat to a live LLM.
+ * @summary Set a secret
+ */
+export const setSecret = async (secretInput: SecretInput, options?: RequestInit): Promise<SecretsResponse> => {
+
+  return customFetch<SecretsResponse>(getSetSecretUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      secretInput,)
+  }
+);}
+
+
+
+
+export const getSetSecretMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setSecret>>, TError,{data: BodyType<SecretInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setSecret>>, TError,{data: BodyType<SecretInput>}, TContext> => {
+
+const mutationKey = ['setSecret'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setSecret>>, {data: BodyType<SecretInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  setSecret(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetSecretMutationResult = NonNullable<Awaited<ReturnType<typeof setSecret>>>
+    export type SetSecretMutationBody = BodyType<SecretInput>
+    export type SetSecretMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Set a secret
+ */
+export const useSetSecret = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setSecret>>, TError,{data: BodyType<SecretInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof setSecret>>,
+        TError,
+        {data: BodyType<SecretInput>},
+        TContext
+      > => {
+      return useMutation(getSetSecretMutationOptions(options));
     }
 

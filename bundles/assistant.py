@@ -112,8 +112,13 @@ def build_assistant(
     """
     graph = Graph()
     kwargs = {}
-    if llm_provider is not None:
-        kwargs["llm_provider"] = llm_provider
+    # chat_llm_responder is an @llm_behavior, so the runtime needs a provider.
+    # Default to the chat MockChatProvider (no API key needed) — callers that
+    # have a real provider key pass it in explicitly.
+    if llm_provider is None:
+        from packs.chat.llm import MockChatProvider
+        llm_provider = MockChatProvider()
+    kwargs["llm_provider"] = llm_provider
     if persist_to is not None:
         kwargs["persist_to"] = persist_to
 

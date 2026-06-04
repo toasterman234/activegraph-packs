@@ -25,7 +25,8 @@ from packs.identity_auth.behaviors import clear_principal_registry
 from packs.communication import pack as comm_pack, CommunicationSettings
 from packs.communication.behaviors import clear_thread_registry
 from packs.chat import pack as chat_pack, ChatSettings
-from packs.chat.behaviors import clear_session_registry, reset_mock_response_idx
+from packs.chat.behaviors import clear_session_registry
+from packs.chat.llm import MockChatProvider
 from packs.chat.tools import submit_chat_input_fn
 from packs.email import pack as email_pack, EmailSettings
 from packs.email.behaviors import clear_email_registry
@@ -37,10 +38,10 @@ def _make_full_runtime() -> tuple:
     clear_thread_registry()
     clear_session_registry()
     clear_email_registry()
-    reset_mock_response_idx()
 
     g = Graph()
-    rt = Runtime(g)
+    # chat_llm_responder is an @llm_behavior — runtime requires a provider.
+    rt = Runtime(g, llm_provider=MockChatProvider())
 
     rt.load_pack(core_pack, settings=CoreSettings())
     rt.load_pack(identity_pack, settings=IdentitySettings(

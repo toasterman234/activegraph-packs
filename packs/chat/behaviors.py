@@ -16,10 +16,13 @@ Thread continuity:
   CommMessage.metadata.thread_id_hint is set to session_id so each session gets its
   own distinct comm_thread (keyed "chat::<session_id>" by thread_tracker).
 
-LLM context assembly:
-  chat_llm_responder assembles: system_prompt + prior turn history (up to max_context_messages)
-  + memory placeholder (if include_memory) + profile placeholder (if include_profile).
-  llm_provider='mock' returns deterministic stubs (no API key required).
+LLM wiring (native):
+  chat_llm_responder is an @llm_behavior — the runtime owns the LLM lifecycle
+  (emits llm.requested → provider.complete() → llm.responded) and assembles the
+  prompt from the triggering comm_message plus a scoped graph view. The active
+  provider is set on the Runtime (see packs/chat/llm.py: select_chat_provider).
+  With no provider key configured the MockChatProvider serves an instructive
+  canned reply, so the full pipeline runs end-to-end without an API key.
 """
 
 from __future__ import annotations
@@ -27,8 +30,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from activegraph.packs import behavior
+from activegraph.packs import behavior, llm_behavior
 
+from .llm import ChatReply
 from .settings import ChatSettings
 
 # ================================================================ Session registry
@@ -49,81 +53,6 @@ def clear_session_registry() -> None:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-# ================================================================ Mock LLM
-
-_MOCK_RESPONSES = [
-    "I understand your request. I'll work on that for you.",
-    "Thanks for the context. Here's what I've noted and how I can help.",
-    "Got it — I've processed your message and will take the appropriate next steps.",
-    "Understood. I've recorded this and will proceed accordingly.",
-    "Thank you for reaching out. I'm on it.",
-]
-_mock_response_idx = 0
-
-
-def _get_mock_response(content: str, turn_number: int, system_prompt: Optional[str]) -> str:
-    global _mock_response_idx
-    response = _MOCK_RESPONSES[_mock_response_idx % len(_MOCK_RESPONSES)]
-    _mock_response_idx += 1
-    return f"[Turn {turn_number}] {response}"
-
-
-def reset_mock_response_idx() -> None:
-    """Reset mock response counter — call for reproducible fixtures."""
-    global _mock_response_idx
-    _mock_response_idx = 0
-
-
-# ================================================================ Context assembly helpers
-
-def _build_context_view(
-    session_id: str,
-    current_content: str,
-    settings: ChatSettings,
-) -> str:
-    """Assemble a context string for the LLM from turn history, memory, and profile.
-
-    Respects max_context_messages, include_memory, include_profile settings.
-    Returns a string suitable for inclusion as the LLM user/system prompt context.
-    """
-    parts: list[str] = []
-
-    # ── System prompt ───────────────────────────────────────────────────────
-    if settings.system_prompt_override:
-        parts.append(f"[System] {settings.system_prompt_override}")
-
-    # ── Agent profile context ───────────────────────────────────────────────
-    if settings.include_profile:
-        parts.append(
-            "[Profile] Agent context: acting as the user's intelligent assistant. "
-            "Respond concisely and accurately."
-        )
-
-    # ── Memory context ──────────────────────────────────────────────────────
-    if settings.include_memory:
-        parts.append(
-            "[Memory] No prior memory candidates available for this session."
-        )
-
-    # ── Conversation history ────────────────────────────────────────────────
-    history = _SESSION_TURN_HISTORY.get(session_id, [])
-    max_ctx = settings.max_context_messages
-    # Each entry has user + assistant = 2 "messages"; take most recent turns
-    trimmed = history[-max_ctx:] if max_ctx > 0 else []
-    if trimmed:
-        history_lines = ["[History]"]
-        for entry in trimmed:
-            history_lines.append(f"  User: {entry['user']}")
-            if entry.get("assistant"):
-                history_lines.append(f"  Assistant: {entry['assistant']}")
-        parts.append("\n".join(history_lines))
-
-    # ── Current message ─────────────────────────────────────────────────────
-    parts.append(f"[Current] User: {current_content}")
-
-    return "\n".join(parts)
 
 
 # ================================================================ Behaviors
@@ -283,68 +212,58 @@ def chat_ingester(event, graph, ctx, *, settings: ChatSettings):
     })
 
 
-@behavior(
+@llm_behavior(
     name="chat_llm_responder",
     on=["object.created"],
-    where={"object.type": "comm_message"},
+    # Scoped precisely so the (potentially paid) LLM call fires only for
+    # inbound chat messages — never for outbound/email/other comm traffic.
+    where={
+        "object.type": "comm_message",
+        "object.data.channel": "chat",
+        "object.data.direction": "inbound",
+    },
+    description=(
+        "You are the assistant in an ActiveGraph-powered chat. Read the user's "
+        "most recent message (the triggering comm_message) together with any "
+        "prior context in the graph view, then reply helpfully and concisely."
+    ),
+    output_schema=ChatReply,
+    # model=None → the runtime resolves the model from the active provider's
+    # default_model at call time (set via packs/chat/llm.py: select_chat_provider).
+    # This also skips cross-family model validation, which a static model name
+    # would trip when the configured provider differs.
+    model=None,
+    view={
+        "around": "event.payload.object.id",
+        "depth": 1,
+        "recent_events": 15,
+    },
     creates=["comm_response_candidate"],
+    temperature=0.7,
+    max_tokens=1024,
 )
-def chat_llm_responder(event, graph, ctx, *, settings: ChatSettings):
-    """Produce a CommResponseCandidate for inbound chat messages.
+def chat_llm_responder(event, graph, ctx, out, *, settings: ChatSettings):
+    """Produce a CommResponseCandidate for inbound chat messages (native LLM).
 
     On: object.created (comm_message, channel=chat, direction=inbound)
     Creates: comm_response_candidate (status=approved if auto_approve_responses=True)
     Relations: response_to
 
-    Context assembly (always performed, even in mock mode):
-      - prior turn history (up to max_context_messages turns)
-      - memory candidates (placeholder if include_memory=True)
-      - agent profile context (placeholder if include_profile=True)
-      - system_prompt_override if set
-
-    llm_provider='mock' returns deterministic stubs — no API key required.
+    The runtime drives the LLM (emitting llm.requested/llm.responded events) and
+    hands us ``out`` — a parsed :class:`ChatReply`. We map ``out.reply`` onto a
+    CommResponseCandidate; chat_responder then writes it to the ChatTurn.
     """
     obj = event.payload.get("object", {})
     msg_id = obj.get("id")
     msg_data = obj.get("data", {})
 
-    if msg_data.get("channel") != "chat":
-        return
-    if msg_data.get("direction") != "inbound":
-        return
-
-    content = msg_data.get("content") or ""
     thread_id = msg_data.get("thread_id")
     frame_id = msg_data.get("frame_id")
-
-    # Resolve session_id and turn_number
     session_id = _MESSAGE_TO_SESSION.get(msg_id)
-    turn_number = 1
-    turn_id = _MESSAGE_TO_TURN.get(msg_id)
-    if turn_id:
-        try:
-            turn_obj = graph.get_object(turn_id)
-            if turn_obj:
-                turn_number = turn_obj.data.get("turn_number", 1)
-        except Exception:
-            pass
 
-    # ── Context assembly ───────────────────────────────────────────────────
-    # Build the context view from history + memory + profile, respecting settings.
-    # This is assembled regardless of llm_provider so the structure is always correct.
-    context_view = _build_context_view(
-        session_id=session_id or "",
-        current_content=content,
-        settings=settings,
-    )
-
-    provider = settings.llm_provider
-    if provider == "mock" or not provider:
-        response_content = _get_mock_response(content, turn_number, context_view)
-    else:
-        # Real LLM integration point — falls back to mock without a configured key.
-        # TODO: wire openai/anthropic/openrouter SDK here using settings.model.
-        response_content = _get_mock_response(content, turn_number, context_view)
+    response_content = (getattr(out, "reply", None) or "").strip()
+    if not response_content:
+        return
 
     status = "approved" if settings.auto_approve_responses else "proposed"
 

@@ -58,7 +58,12 @@ router.get("/activegraph/packs", (req, res) => proxyGet(req, res, "/packs"));
 router.get("/activegraph/frames", (req, res) => proxyGet(req, res, "/frames"));
 router.get("/activegraph/summary", (req, res) => proxyGet(req, res, "/summary"));
 
+router.get("/activegraph/chat/config", (req, res) => proxyGet(req, res, "/chat/config"));
+router.get("/activegraph/secrets", (req, res) => proxyGet(req, res, "/secrets"));
+
 router.post("/activegraph/chat", (req, res) => proxyPost(req, res, "/chat"));
 router.post("/activegraph/reset", (req, res) => proxyPost(req, res, "/reset"));
+router.post("/activegraph/chat/config", (req, res) => proxyPost(req, res, "/chat/config"));
+router.post("/activegraph/secrets", (req, res) => proxyPost(req, res, "/secrets"));
 
 export default router;

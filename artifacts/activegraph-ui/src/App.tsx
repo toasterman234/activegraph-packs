@@ -9,6 +9,7 @@ import Trace from "@/pages/trace";
 import Packs from "@/pages/packs";
 import Frames from "@/pages/frames";
 import Chat from "@/pages/chat";
+import Secrets from "@/pages/secrets";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient();
@@ -23,6 +24,7 @@ function Router() {
         <Route path="/packs" component={Packs} />
         <Route path="/frames" component={Frames} />
         <Route path="/chat" component={Chat} />
+        <Route path="/secrets" component={Secrets} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

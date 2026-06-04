@@ -7,7 +7,10 @@
  */
 
 export * from './behaviorInfo';
+export * from './chatConfig';
+export * from './chatConfigInput';
 export * from './chatMessageInput';
+export * from './chatProvider';
 export * from './chatResponse';
 export * from './errorResponse';
 export * from './frame';
@@ -25,6 +28,9 @@ export * from './packInfo';
 export * from './packsResponse';
 export * from './relationTypeInfo';
 export * from './resetResponse';
+export * from './secretInput';
+export * from './secretRef';
+export * from './secretsResponse';
 export * from './summaryResponse';
 export * from './traceEvent';
 export * from './traceEventPayload';

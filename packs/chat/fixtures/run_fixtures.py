@@ -18,20 +18,19 @@ from packs.core import pack as core_pack, CoreSettings
 from packs.communication import pack as comm_pack, CommunicationSettings
 from packs.communication.behaviors import clear_thread_registry
 from packs.chat import pack as chat_pack, ChatSettings
-from packs.chat.behaviors import (
-    clear_session_registry,
-    reset_mock_response_idx,
-)
+from packs.chat.behaviors import clear_session_registry
+from packs.chat.llm import MockChatProvider
 from packs.chat.tools import get_session_turns_fn, submit_chat_input_fn
 
 
 def _make_runtime(auto_approve: bool = True) -> tuple:
     clear_thread_registry()
     clear_session_registry()
-    reset_mock_response_idx()
 
     g = Graph()
-    rt = Runtime(g)
+    # chat_llm_responder is an @llm_behavior — the runtime requires a provider.
+    # MockChatProvider runs the pipeline end-to-end with no API key.
+    rt = Runtime(g, llm_provider=MockChatProvider())
     rt.load_pack(core_pack, settings=CoreSettings())
     rt.load_pack(comm_pack, settings=CommunicationSettings())
     rt.load_pack(

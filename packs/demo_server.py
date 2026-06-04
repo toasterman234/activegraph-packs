@@ -43,6 +43,14 @@ _runtime_lock = threading.Lock()
 _rt = None                  # the live Runtime
 _initial_events: list = []  # events captured at startup (for reset)
 _frames: dict = {}          # frame_id -> {id, status, started_at, ended_at, events[]}
+_chat_config: dict = {}     # last-resolved chat LLM config (mode/provider/model/...)
+
+# Env vars that must never be overwritten via POST /secrets — setting these
+# would break the running process. Arbitrary credential names are still allowed.
+_RESERVED_ENV_NAMES = frozenset({
+    "PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "PYTHONPATH", "PYTHONHOME",
+    "HOME", "SHELL", "IFS", "BASH_ENV", "ENV", "PWD", "PORT",
+})
 
 def _ts() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -151,12 +159,24 @@ def _build_runtime():
     from packs.identity_auth.behaviors import rebuild_principal_registry
     from packs.memory_gateway import MemoryGatewaySettings
 
+    from packs.chat.llm import select_chat_provider
+
     db = _db_path()
     mem_settings = MemoryGatewaySettings(backend_url=_memory_db_path())
     resuming = _store_has_run(db)
 
+    # Resolve the chat LLM provider from the environment (live if a provider
+    # key is present, MockChatProvider otherwise). The runtime owns the LLM
+    # lifecycle, so the provider must be attached at construction on BOTH the
+    # fresh and the resume path.
+    provider, info = select_chat_provider()
+    global _chat_config
+    _chat_config = info
+    print(f"[demo_server] Chat LLM: mode={info['mode']} "
+          f"provider={info['provider']} model={info.get('model')}", flush=True)
+
     if resuming:
-        rt = Runtime.load(db)
+        rt = Runtime.load(db, llm_provider=provider)
         load_assistant_packs(rt, memory_gateway_settings=mem_settings)
         # Replay rebuilds graph objects without firing behaviors, so the
         # in-memory principal dedup registry is empty — repopulate it from
@@ -166,7 +186,11 @@ def _build_runtime():
         print(f"[demo_server] Resumed run {rt.run_id} from {db} "
               f"({n} principals re-indexed)", flush=True)
     else:
-        rt = build_assistant(persist_to=db, memory_gateway_settings=mem_settings)
+        rt = build_assistant(
+            persist_to=db,
+            memory_gateway_settings=mem_settings,
+            llm_provider=provider,
+        )
         print(f"[demo_server] Fresh run {rt.run_id} persisting to {db}", flush=True)
 
     # Attach a listener to collect frame events
@@ -245,6 +269,75 @@ def _reset_rt() -> list[str]:
         failed = _wipe_store(_db_path()) + _wipe_store(_memory_db_path())
         _rt = _build_runtime()
         return failed
+
+
+def _refresh_chat_provider() -> dict:
+    """Re-resolve the chat LLM provider from the current environment and
+    hot-swap it onto the live runtime.
+
+    Called after a key/model/provider change (Secrets or /chat/config) so chat
+    upgrades to a real LLM — or downgrades back to mock — without a restart.
+    The runtime reads ``self.llm_provider`` at call time, so reassigning it is
+    enough; chat_llm_responder uses model=None, so no re-validation is needed.
+    """
+    global _chat_config
+    from packs.chat.llm import select_chat_provider
+
+    provider, info = select_chat_provider()
+    with _runtime_lock:
+        if _rt is not None:
+            _rt.llm_provider = provider
+        _chat_config = info
+    return info
+
+
+def _chat_config_payload() -> dict:
+    """Public, secret-free view of the chat LLM configuration."""
+    from packs.chat.llm import SUPPORTED_PROVIDERS, provider_key_env
+
+    labels = {"openai": "OpenAI", "anthropic": "Anthropic"}
+    providers = []
+    for pid in SUPPORTED_PROVIDERS:
+        env = provider_key_env(pid)
+        providers.append({
+            "id": pid,
+            "label": labels.get(pid, pid.title()),
+            "key_env": env,
+            "key_present": bool(env and os.environ.get(env)),
+        })
+    return {
+        "mode": _chat_config.get("mode", "mock"),
+        "provider": _chat_config.get("provider"),
+        "model": _chat_config.get("model"),
+        "key_present": _chat_config.get("key_present", False),
+        "providers": providers,
+    }
+
+
+def _secrets_payload(graph) -> dict:
+    """Secret-free view of registered credentials.
+
+    Lists name-only ``credential_ref`` objects from the graph plus whether the
+    matching environment value is currently present in-process. Secret VALUES
+    are never read or returned here.
+    """
+    credentials = []
+    for o in graph.all_objects():
+        if o.type != "credential_ref":
+            continue
+        d = o.data or {}
+        name = d.get("name")
+        credentials.append({
+            "id": str(o.id),
+            "name": name,
+            "provider_hint": d.get("provider_hint"),
+            "scope": d.get("scope"),
+            "value_present": bool(name and os.environ.get(str(name))),
+            "last_used_at": d.get("last_used_at"),
+            "use_count": d.get("use_count", 0),
+        })
+    credentials.sort(key=lambda c: c.get("name") or "")
+    return {"credentials": credentials, "total": len(credentials)}
 
 
 # ─── Serialisation helpers ────────────────────────────────────────────────────
@@ -458,6 +551,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_frames()
             elif path == "/summary":
                 self._handle_summary()
+            elif path == "/chat/config":
+                self._handle_chat_config_get()
+            elif path == "/secrets":
+                self._handle_secrets_get()
             elif path == "/health":
                 self._send_json({"status": "ok"})
             else:
@@ -475,6 +572,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_chat(body)
             elif path == "/reset":
                 self._handle_reset()
+            elif path == "/chat/config":
+                self._handle_chat_config_post(body)
+            elif path == "/secrets":
+                self._handle_secrets_post(body)
             else:
                 self._send_error("Not found", 404)
         except Exception as e:
@@ -583,27 +684,34 @@ class Handler(BaseHTTPRequestHandler):
             self._send_error("content is required", 400)
             return
 
+        # Drive the REAL chat pack pipeline:
+        #   submit_chat_input → chat_ingester (Source + CommMessage + ChatSession
+        #   + ChatTurn) → chat_llm_responder (@llm_behavior, native LLM) →
+        #   CommResponseCandidate → chat_responder (writes ChatTurn.assistant_message).
+        from packs.chat.tools import submit_chat_input_fn
+
+        user_ref = body.get("user_ref") or "user:inspector"
+        session_id = body.get("session_id")
         frame_id = str(uuid.uuid4())
 
         objects_before = set(o.id for o in rt.graph.all_objects())
         events_before = len(rt.graph.events)
 
-        # Inject as a chat_message source
-        rt.graph.add_object("source", {
-            "kind": "chat_message",
-            "content": content,
-            "channel": "chat",
-            "frame_id": frame_id,
-            "sender_ref": body.get("user_ref") or "user:inspector",
-        })
+        inp = submit_chat_input_fn(
+            rt.graph,
+            user_ref=user_ref,
+            content=content,
+            session_id=session_id,
+            frame_id=frame_id,
+        )
 
         rt.run_until_idle()
 
         objects_after = rt.graph.all_objects()
         new_obj_ids = [str(o.id) for o in objects_after if o.id not in objects_before]
-
-        # Register this as a frame
         events_after = len(rt.graph.events)
+
+        # Register this as a frame for the Inspector's frame view.
         _frames[frame_id] = {
             "id": frame_id,
             "status": "completed",
@@ -614,27 +722,128 @@ class Handler(BaseHTTPRequestHandler):
             "events": [_event_to_dict(e) for e in rt.graph.events[events_before:]],
         }
 
-        # Build a reply from new artifacts/observations
-        reply_lines = []
-        for o in objects_after:
-            if o.id not in objects_before:
-                d = _object_to_dict(o)
-                if d["type"] in ("artifact", "observation", "task"):
-                    content_str = (d["data"] or {}).get("content") or (d["data"] or {}).get("title") or str(d["id"])
-                    reply_lines.append(f"[{d['type']}] {content_str}")
+        # The assistant's reply lives on the ChatTurn produced this frame.
+        turns = [
+            o for o in objects_after
+            if o.type == "chat_turn" and (o.data or {}).get("frame_id") == frame_id
+        ]
+        turns.sort(key=lambda t: (t.data or {}).get("turn_number", 0))
+        turn = turns[-1] if turns else None
+        reply = ((turn.data.get("assistant_message") if turn else None) or "").strip()
+        if not reply:
+            reply = "No assistant reply was produced for this message."
 
-        if reply_lines:
-            reply = "Created:\n" + "\n".join(reply_lines[:8])
-        else:
-            reply = f"Processed message. {len(new_obj_ids)} new object(s) added to the graph."
+        resolved_session = None
+        if turn:
+            resolved_session = (turn.data or {}).get("session_id")
 
         self._send_json({
             "content": reply,
             "frame_id": frame_id,
             "user_message": content,
+            "session_id": resolved_session or session_id,
+            "turn_id": str(turn.id) if turn else None,
+            "llm_mode": _chat_config.get("mode", "mock"),
             "event_count": events_after - events_before,
             "new_objects": new_obj_ids,
         })
+
+    # ── GET/POST /chat/config ───────────────────────────────────────────────
+
+    def _handle_chat_config_get(self):
+        _get_rt()  # ensure the runtime (and _chat_config) is initialised
+        self._send_json(_chat_config_payload())
+
+    def _handle_chat_config_post(self, body: dict):
+        """Select the chat provider/model. Persists only NON-SECRET prefs
+        (provider id + model name) into the process env, then hot-swaps the
+        live provider. Secret values are set via POST /secrets, never here.
+        """
+        from packs.chat.llm import SUPPORTED_PROVIDERS
+
+        _get_rt()
+        provider = body.get("provider")
+        model = body.get("model")
+
+        if provider is not None:
+            provider = str(provider).strip().lower()
+            if provider and provider not in SUPPORTED_PROVIDERS:
+                self._send_error(
+                    f"Unsupported provider '{provider}'. "
+                    f"Supported: {', '.join(SUPPORTED_PROVIDERS)}.",
+                    400,
+                )
+                return
+            if provider:
+                os.environ["CHAT_LLM_PROVIDER"] = provider
+            else:
+                os.environ.pop("CHAT_LLM_PROVIDER", None)
+
+        if model is not None:
+            model = str(model).strip()
+            if model:
+                os.environ["CHAT_LLM_MODEL"] = model
+            else:
+                os.environ.pop("CHAT_LLM_MODEL", None)
+
+        _refresh_chat_provider()
+        self._send_json(_chat_config_payload())
+
+    # ── GET/POST /secrets ───────────────────────────────────────────────────
+
+    def _handle_secrets_get(self):
+        rt = _get_rt()
+        self._send_json(_secrets_payload(rt.graph))
+
+    def _handle_secrets_post(self, body: dict):
+        """Register a secret by NAME and set its value in the process env only.
+
+        SECURITY: the value is written to os.environ for in-process use and a
+        name-only ``credential_ref`` is recorded in the graph. The value is
+        NEVER written to the graph, the event log, disk, or the response.
+        """
+        rt = _get_rt()
+        name = (body.get("name") or "").strip().upper()
+        value = body.get("value")
+        provider_hint = (body.get("provider_hint") or "").strip().lower() or None
+
+        if not name:
+            self._send_error("name is required", 400)
+            return
+        if not value:
+            self._send_error("value is required", 400)
+            return
+        # Allow arbitrary credential names ("allows more"), but refuse to
+        # overwrite system-critical variables — a stray write to PATH or
+        # PYTHONPATH would break the running process.
+        if name in _RESERVED_ENV_NAMES:
+            self._send_error(
+                f"'{name}' is a reserved system variable and cannot be set here.",
+                400,
+            )
+            return
+
+        # Set the value for in-process use ONLY. Never persisted.
+        os.environ[name] = str(value)
+
+        # Record a name-only reference in the graph if not already present.
+        existing = [
+            o for o in rt.graph.all_objects()
+            if o.type == "credential_ref" and (o.data or {}).get("name") == name
+        ]
+        if not existing:
+            rt.graph.add_object("credential_ref", {
+                "name": name,
+                "scope": "read",
+                "provider_hint": provider_hint,
+            })
+
+        # A new key may upgrade chat from mock → live (or change provider).
+        _refresh_chat_provider()
+
+        payload = _secrets_payload(rt.graph)
+        payload["chat_config"] = _chat_config_payload()
+        self._send_json(payload)
 
     # ── POST /reset ────────────────────────────────────────────────────────
 

@@ -148,6 +148,12 @@ export interface ChatResponse {
   content: string;
   frame_id: string;
   user_message?: string;
+  /** @nullable */
+  session_id?: string | null;
+  /** @nullable */
+  turn_id?: string | null;
+  /** @nullable */
+  llm_mode?: string | null;
   event_count?: number;
   new_objects?: string[];
 }
@@ -159,6 +165,66 @@ export interface ResetResponse {
 
 export interface ErrorResponse {
   error: string;
+}
+
+export interface ChatProvider {
+  id: string;
+  label: string;
+  key_env: string;
+  key_present: boolean;
+}
+
+export interface ChatConfig {
+  /** mock or live */
+  mode: string;
+  /** @nullable */
+  provider?: string | null;
+  /** @nullable */
+  model?: string | null;
+  key_present: boolean;
+  providers: ChatProvider[];
+}
+
+export interface ChatConfigInput {
+  /**
+     * Provider id (openai, anthropic) or empty to auto-detect
+     * @nullable
+     */
+  provider?: string | null;
+  /**
+     * Model name; empty to use provider default
+     * @nullable
+     */
+  model?: string | null;
+}
+
+export interface SecretRef {
+  /** @nullable */
+  id?: string | null;
+  name: string;
+  /** @nullable */
+  provider_hint?: string | null;
+  /** @nullable */
+  scope?: string | null;
+  value_present: boolean;
+  /** @nullable */
+  last_used_at?: string | null;
+  use_count?: number;
+}
+
+export interface SecretsResponse {
+  credentials: SecretRef[];
+  total: number;
+  chat_config?: ChatConfig;
+}
+
+export interface SecretInput {
+  /** Credential / env var name, e.g. OPENAI_API_KEY */
+  name: string;
+  /** Secret value — used in-process only, never persisted */
+  value: string;
+  /** @nullable */
+  provider_hint?: string | null;
 }
 
 export type GetTraceParams = {

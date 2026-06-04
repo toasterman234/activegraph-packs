@@ -1,1 +1,3 @@
 - [ActiveGraph persistence & resume](activegraph-persistence.md) — built-in event-sourced SQLite/Postgres store; replay does NOT fire behaviors so rebuild in-process registries; Relation field layout is counterintuitive.
+- [Orval query-key invalidation](orval-query-keys.md) — generated useQuery requires explicit queryKey; use the same getXxxQueryKey() helper for hook AND invalidate or invalidation silently no-ops.
+- [Inspector demo server ports](inspector-demo-ports.md) — test demo on localhost:7788 (api-server :8080); $REPLIT_DEV_DOMAIN curl returns HTTP 000 (proxy quirk). /chat expects `content`, returns reply in `content`.
