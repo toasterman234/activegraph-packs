@@ -56,6 +56,15 @@ Thumbs.db
 .local/
 .pythonlibs/
 
+# Internal agent tooling (Replit) — not part of the OSS product
+.agents/
+
+# Replit canvas/design sandbox — dev-only tool, not part of the product
+artifacts/mockup-sandbox/
+
+# Scratch / pasted reference material (screenshots, pasted reports)
+attached_assets/
+
 # ActiveGraph demo event-log store
 /data/
 

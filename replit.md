@@ -34,7 +34,6 @@ bundles/                  # Pre-assembled pack collections
 artifacts/
   api-server/             # Express API server (TypeScript)
   activegraph-ui/         # React inspector UI (TypeScript)
-attached_assets/          # Architecture doc and reference material
 pyproject.toml            # Python project — activegraph dep + pack entry points
 ```
 
