@@ -19,30 +19,77 @@ ActiveGraph is a reactive object-graph runtime for Python. You define objects (t
 
 ## Quick Start
 
-```bash
-# 1. Install Python dependencies (activegraph + all packs in editable mode)
-pip install -e ".[dev]"
+Pick the path that matches what you want to do. The **same code** runs in all
+three — no Replit-specific build, no API key.
 
-# 2. Install Node dependencies
-pnpm install
+### Path 1 — Use the packs only (Python, no UI)
 
-# 3. Start the API server — also launches the Python demo server as a subprocess
-PORT=5000 pnpm --filter @workspace/api-server run dev
-
-# 4. In a second terminal, start the Inspector UI
-PORT=3000 pnpm --filter @workspace/activegraph-ui run dev
-```
-
-Once both are running, open `http://localhost:3000` for the Inspector UI. The API server is at `http://localhost:5000` and the Python demo server at `http://localhost:7788`.
-
-No API key required. The demo server seeds the graph with fixture data from all loaded packs on startup and persists state to SQLite in `data/`.
-
-To run just the demo server without the UI:
+For embedding packs in your own code, running fixtures, or the standalone demo
+server. No Node required.
 
 ```bash
+pip install -e ".[dev]"          # activegraph + all packs (editable install)
+
+# Option A: run the standalone demo server (HTTP API on :7788)
 python packs/demo_server.py
-# Listening on http://localhost:7788
+
+# Option B: build a runtime in your own code
+python -c "from bundles import build_vc_assistant; \
+  build_vc_assistant().run_goal('Diligence: Northwind Robotics')"
 ```
+
+### Path 2 — Run the full demo locally (UI + API + runtime)
+
+One command brings up the React Inspector UI, the Express API server, and the
+Python runtime together (the API server spawns the Python process for you).
+
+```bash
+pip install -e ".[dev]"          # Python deps
+pnpm install                     # Node deps
+pnpm dev                         # starts the whole stack
+```
+
+> The local dev commands assume a POSIX shell (macOS / Linux / Replit). On
+> Windows, run them under WSL.
+
+Then open **http://localhost:3000**.
+
+| Service | URL |
+|---------|-----|
+| Inspector UI | http://localhost:3000 |
+| API server | http://localhost:5000 |
+| Python runtime | http://localhost:7788 (spawned by the API server) |
+
+Override ports with `API_PORT` / `UI_PORT`. To run the pieces in separate
+terminals instead of `pnpm dev`:
+
+```bash
+PORT=5000 pnpm --filter @workspace/api-server run dev
+PORT=3000 BASE_PATH=/ pnpm --filter @workspace/activegraph-ui run dev
+```
+
+### Path 3 — Develop on Replit
+
+Open the repo on Replit and press **Run**. The workspace is preconfigured: each
+artifact (UI, API server) has its own workflow, ports and inter-service routing
+are wired automatically, and the preview pane shows the Inspector UI. No
+environment setup needed.
+
+> **How dual-target works.** The UI reads `PORT` / `BASE_PATH` from the
+> environment when present (Replit injects them) and falls back to local
+> defaults (`5173` / `/`) otherwise. Off-platform the UI proxies `/api` to the
+> local API server; on Replit the platform path-routes `/api` instead. The
+> Replit-only editor plugins load only when running on Replit and are silently
+> skipped in a plain checkout.
+
+### State & persistence
+
+The demo persists its event log and memory store to SQLite under `data/` by
+default, so state survives restarts when running locally. Point them elsewhere
+(e.g. durable storage) with `ACTIVEGRAPH_DB` and `ACTIVEGRAPH_MEMORY_DB`. On an
+ephemeral or autoscale deployment the filesystem is **not** durable — the graph
+simply re-seeds from pack fixtures on each cold start, and `POST /reset` re-seeds
+on demand.
 
 ---
 
