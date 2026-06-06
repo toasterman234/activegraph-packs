@@ -1,4 +1,4 @@
-# activegraph-packs [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+# activegraph-packs [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 An open-source collection of [ActiveGraph](https://pypi.org/project/activegraph/) packs, bundles, a Python demo server, and a React Inspector UI.
 
@@ -299,4 +299,4 @@ The one-paragraph version: packs should degrade gracefully (hard-require only wh
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Apache 2.0. See [LICENSE](LICENSE).

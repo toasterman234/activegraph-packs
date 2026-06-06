@@ -48,7 +48,7 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ### OSS hygiene
 
-- `LICENSE` (MIT, 2026)
+- `LICENSE` (Apache 2.0, 2026)
 - `CONTRIBUTING.md` (pack authoring guide, hygiene checklist, design rules)
 - `README.md` (project overview, quick start, pack table, bundle table, architecture diagram)
 - `activegraph-builder-report.md` (builder log)
