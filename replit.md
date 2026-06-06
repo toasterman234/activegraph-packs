@@ -154,7 +154,7 @@ An open-source library of ActiveGraph packs that makes it easy for developers to
 
 ## Pointers
 
-- Architecture doc: `attached_assets/Pasted-ActiveGraph-Direction-Report-Pack-Based-Assistant-Subst_1780500272653.txt`
+- Architecture doc: `docs/architecture.md` (direction report: `docs/activegraph-direction-report.md`)
 - ActiveGraph docs: https://docs.activegraph.ai
 - PyPI: https://pypi.org/project/activegraph/
 - Diligence pack reference: see `activegraph/packs/diligence/` in the installed package
