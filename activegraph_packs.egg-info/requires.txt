@@ -1,9 +1,0 @@
-activegraph[llm]>=1.0.5
-pydantic>=2.0
-
-[dev]
-activegraph[llm]>=1.0.5
-pydantic>=2.0
-pytest>=8.0
-pytest-asyncio>=0.23
-pyyaml>=6.0
