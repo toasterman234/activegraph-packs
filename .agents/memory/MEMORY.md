@@ -1,4 +1,0 @@
-- [ActiveGraph relation arg order](activegraph-quirks.md) — add_relation signature differs per pack (mg vs chat); a known API footgun.
-- [Long-term memory architecture](long-term-memory.md) — write path already worked via Core; real gap was retrieval; seams for embeddings/backend/ingestion.
-- [ActiveGraph event vocabulary](activegraph-event-vocab.md) — trace payload shapes; patch.rejected is its own flat event; behavior lives in payload.behavior; demo emits no tool.*/behavior.failed.
-- [Dual-target portability](dual-target-portability.md) — Replit+off-platform: env-with-defaults, gate on REPL_ID, /api via platform routing vs Vite proxy, pnpm dev launcher.

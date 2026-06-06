@@ -1,8 +1,0 @@
-uploads = []
-generated = []
-
-[[outputs]]
-id = "c9Hnz2hnT6ujcWfB1BS6d"
-uri = "file://activegraph-builder-report.md"
-type = "text"
-title = "ActiveGraph Builder's Field Report"
