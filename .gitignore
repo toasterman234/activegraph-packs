@@ -80,3 +80,4 @@ attached_assets/
 *.secrets
 *_secret
 *_secrets
+.venv/
