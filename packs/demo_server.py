@@ -61,6 +61,38 @@ _FORMALITIES = ("informal", "neutral", "formal")
 _GOAL_PRIORITIES = ("low", "medium", "high", "critical")
 _GOAL_STATUSES = ("active", "paused", "completed", "cancelled")
 
+class _LitellmEmbedder:
+    """Embeds text via litellm's OpenAI-compatible /v1/embeddings endpoint
+    (same OPENAI_API_KEY / OPENAI_BASE_URL used for chat). Registered with
+    Memory Gateway's embedding seam (see docs/long-term-memory.md §3) so
+    recall ranks by cosine similarity instead of raw keyword overlap — needed
+    because a natural-language question rarely shares enough exact words with
+    a long stored memory to clear the lexical Jaccard threshold."""
+
+    def __init__(self, model: str = "embedding-model") -> None:
+        self._model = model
+        self._client = None
+
+    def embed(self, texts: list) -> list:
+        if self._client is None:
+            from openai import OpenAI
+            self._client = OpenAI()
+        resp = self._client.embeddings.create(model=self._model, input=texts)
+        return [d.embedding for d in resp.data]
+
+
+def _make_embedder():
+    """Factory for auto_configure_embedder(): litellm-backed when a key is
+    present (chat and embeddings share the same gateway/key), else None
+    (stays lexical). Never raises — see auto_configure_embedder's contract."""
+    if not os.environ.get("OPENAI_API_KEY"):
+        return None
+    try:
+        return _LitellmEmbedder(os.environ.get("EMBEDDING_MODEL", "embedding-model"))
+    except Exception:
+        return None
+
+
 def _ts() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -177,8 +209,28 @@ def _build_runtime():
     # memory_writer persists to, so point ChatSettings.memory_backend_url at the
     # same SQLite file. This is what makes cross-session recall work: memories
     # written in one session are retrieved in the next, even across a restart.
-    chat_settings = ChatSettings(memory_backend_url=_memory_db_path())
+    #
+    # This demo server is single-user (Ben) — memory_include_global=True so
+    # subject-less seeded/global memories are recalled (the default False is a
+    # multi-user isolation boundary that doesn't apply here). memory_min_score
+    # is lowered from the 0.1 lexical default because embeddings (wired below
+    # when a key is present) score real semantic matches lower than exact
+    # keyword overlap would — 0.1 was tuned for lexical-only recall.
+    chat_settings = ChatSettings(
+        memory_backend_url=_memory_db_path(),
+        memory_include_global=True,
+        memory_min_score=0.05,
+        memory_top_k=5,
+    )
     resuming = _store_has_run(db)
+
+    # Embedding-based recall (docs/long-term-memory.md §3): auto-activates
+    # when OPENAI_API_KEY is set (same litellm key chat uses), falls back to
+    # lexical Jaccard with no key or on any embedder error. Must run before
+    # any retrieve_memories_fn call, so do it here at runtime construction.
+    from packs.memory_gateway.backend import set_embedder_factory, auto_configure_embedder
+    set_embedder_factory(_make_embedder)
+    auto_configure_embedder()
 
     # Resolve the chat LLM provider from the environment (live if a provider
     # key is present, MockChatProvider otherwise). The runtime owns the LLM
